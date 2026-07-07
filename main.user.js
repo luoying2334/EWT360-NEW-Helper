@@ -10,8 +10,8 @@
 // @author       luoying2334
 // @icon         https://www.ewt360.com/favicon.ico
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/luoying2334/EWT360-NEW-Helper/main/main.user.js
-// @downloadURL  https://raw.githubusercontent.com/luoying2334/EWT360-NEW-Helper/main/main.user.js
+// @updateURL    https://raw.githubusercontent.com/luoying2334/EWT360-NEW-Helper/master/main.user.js
+// @downloadURL  https://raw.githubusercontent.com/luoying2334/EWT360-NEW-Helper/master/main.user.js
 // @supportURL   https://github.com/luoying2334/EWT360-NEW-Helper/issues
 // ==/UserScript==
 
