@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         升学E网通助手 v3.0.1
 // @version      3.0.1
-// @description  适配EWT平台2026年7月封控升级
+// @description  ewt助手，适配EWT平台2026年7月封控升级
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        https://web.ewt360.com/site-study/*
