@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         升学E网通助手 v3.0.1
-// @version      3.0.1
-// @description  ewt助手，适配EWT平台2026年7月封控升级
+// @name         升学E网通助手 v4.0.0
+// @version      4.0.0
+// @description  模块化重构版
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        https://web.ewt360.com/site-study/*
@@ -18,325 +18,800 @@
 (function () {
   'use strict';
 
-  // ==================== 核心：绕过 isTrusted 检测 ====================
-  // isTrusted 是浏览器内部属性，无法通过 JS 覆写。
-  // 方式1：从 DOM 元素的 React 内部属性取出 onClick handler，
-  //        传入 { isTrusted: true } 调用，绕过 handler 内的 isTrusted 检查。
-  // 方式2：沿 Fiber 树向上查找 handler（处理事件委托的情况）。
-  // 方式3：降级到原生 .click()（适用于无 isTrusted 检查的按钮）。
-  var REACT_KEYS = ['__reactEventHandlers$', '__reactProps$', '__reactFiber$'];
+  // ============================================================
+  // 1. EWTH.config — 常量 & 选择器
+  // ============================================================
+  var EWTH = {};
 
-  function getHandler(el) {
-    for (var i = 0; i < REACT_KEYS.length; i++) {
-      var key = Object.keys(el).find(function (k) { return k.indexOf(REACT_KEYS[i]) === 0; });
-      if (!key) continue;
-      if (REACT_KEYS[i] === '__reactFiber$') {
-        var fiber = el[key];
-        // 先查自身的 memoizedProps，再沿 fiber.return 向上查（处理事件委托）
-        for (var f = fiber; f; f = f.return) {
-          var h = f.memoizedProps && f.memoizedProps.onClick;
-          if (typeof h === 'function') return h;
-        }
-      } else {
-        var h = el[key] && el[key].onClick;
-        if (typeof h === 'function') return h;
-      }
-    }
-    return null;
-  }
-
-  function reactClick(el) {
-    if (!el) return false;
-    var handler = getHandler(el);
-    if (handler) {
-      handler({ isTrusted: true });
-      return true;
-    }
-    // 降级：无 React handler 的按钮直接用原生 click
-    // （适用于没有 isTrusted 检查的场景，如跳题按钮）
-    try { el.click(); return true; } catch (e) { return false; }
-  }
-
-  // ==================== 调试日志 ====================
-  var Debug = {
-    on: false,
-    ts: function () {
-      var d = new Date();
-      return '[' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2) + ']';
+  EWTH.config = {
+    // —— 定时器间隔 (ms) ——
+    INTERVAL: {
+      SKIP_CHECK:     1500,
+      CHECKPASS_CHECK: 800,
+      AUTOPLAY_CHECK: 2000,
+      SPEED_REAPPLY:  3000
     },
-    log: function (m, s) { if (this.on) console.log(this.ts() + ' [' + m + '] ' + s); }
+
+    // —— 进度条锁定选择器（vjs- 前缀是 Video.js 标准）——
+    PROGRESS_SELECTORS: [
+      '.vjs-progress-control',
+      '.vjs-progress-holder',
+      '.vjs-play-progress',
+      '.vjs-load-progress',
+      '.vjs-seek-bar',
+      '.vjs-slider-horizontal',
+      '.PlayProgressBar',
+      '.LoadProgressBar'
+    ],
+
+    // —— 倍速提示屏蔽选择器 ——
+    SPEED_TIP_SELECTORS: [
+      '.video_speed_tips',
+      '[class*="video_speed_tips" i]',
+      '[class*="speedTips" i]',
+      '[class*="speed_tips" i]'
+    ],
+
+    // —— 完成图片 ID ——
+    FINISHED_IMG_IDS: ['1820894120067424424', '1820894120067448877'],
+
+    // —— 已完成文字 ——
+    FINISHED_TEXT: ['已完成', '已学完']
   };
 
-  // ==================== 自动跳题 ====================
-  var AutoSkip = {
-    t: null,
-    toggle: function (on) { on ? this.start() : this.stop(); },
-    start: function () { if (!this.t) this.t = setInterval(this.check, 1000); },
-    stop: function () { clearInterval(this.t); this.t = null; },
-    check: function () {
+  // ============================================================
+  // 2. EWTH.logger — 分级日志
+  // ============================================================
+  EWTH.logger = (function () {
+    var LEVEL = { NONE: 0, ERROR: 1, WARN: 2, INFO: 3, DEBUG: 4 };
+    var _level = 0;
+    var PREFIX = { 1: 'ERR', 2: 'WRN', 3: 'INF', 4: 'DBG' };
+
+    function ts() {
+      var d = new Date();
+      return '[' + ('0' + d.getHours()).slice(-2) + ':' +
+             ('0' + d.getMinutes()).slice(-2) + ':' +
+             ('0' + d.getSeconds()).slice(-2) + ']';
+    }
+
+    function canLog(lv) { return _level >= lv; }
+
+    return {
+      LEVEL: LEVEL,
+      getLevel: function () { return _level; },
+      setLevel: function (lv) { _level = lv; },
+      error: function (ns, msg) { if (canLog(1)) console.error(ts() + ' [' + ns + ':ERR] ' + msg); },
+      warn:  function (ns, msg) { if (canLog(2)) console.warn (ts() + ' [' + ns + ':WRN] ' + msg); },
+      info:  function (ns, msg) { if (canLog(3)) console.info (ts() + ' [' + ns + ':INF] ' + msg); },
+      debug: function (ns, msg) { if (canLog(4)) console.log  (ts() + ' [' + ns + ':DBG] ' + msg); }
+    };
+  })();
+
+  // ============================================================
+  // 3. EWTH.store — 中心化状态
+  // ============================================================
+  EWTH.store = (function () {
+    var KEY = 'ewt_helper_v4_cfg';
+    var SAVE_DELAY = 100;
+    var _timer = null;
+
+    var _state = {
+      autoSkip:       false,
+      autoPlay:       false,
+      autoCheckPass:  false,
+      speedControl:   false,
+      lockProgress:   false,
+      brushMode:      false,
+      debugEnabled:   false,
+      hasShownGuide:  false
+    };
+
+    function _save() {
+      try { localStorage.setItem(KEY, JSON.stringify(_state)); } catch (e) { /* ignore */ }
+    }
+
+    function _saveDebounced() {
+      if (_timer) clearTimeout(_timer);
+      _timer = setTimeout(_save, SAVE_DELAY);
+    }
+
+    return {
+      init: function () {
+        try {
+          var raw = localStorage.getItem(KEY);
+          if (raw) {
+            var saved = JSON.parse(raw);
+            for (var k in saved) {
+              if (saved.hasOwnProperty(k) && _state.hasOwnProperty(k)) {
+                _state[k] = saved[k];
+              }
+            }
+          }
+        } catch (e) { /* ignore */ }
+      },
+
+      get: function (key) { return _state[key]; },
+
+      set: function (key, value) {
+        if (!_state.hasOwnProperty(key)) return;
+        _state[key] = value;
+        _saveDebounced();
+      },
+
+      save: function () { _save(); }
+    };
+  })();
+
+  // ============================================================
+  // 4. EWTH.core — Fiber 直接调用组件方法，绕过 isTrusted
+  // ============================================================
+  EWTH.core = (function () {
+
+    function _findFiberKey(el) {
+      var keys = Object.keys(el);
+      for (var i = 0; i < keys.length; i++) {
+        if (keys[i].indexOf('__reactFiber$') === 0 ||
+            keys[i].indexOf('__reactInternalInstance$') === 0) return keys[i];
+      }
+      return null;
+    }
+
+    function callComponentMethod(el, methodName) {
+      var fiberKey = _findFiberKey(el);
+      if (!fiberKey) return false;
+
+      var f = el[fiberKey];
+      while (f) {
+        var inst = f.stateNode;
+        if (inst && typeof inst[methodName] === 'function') {
+          try { inst[methodName](); return true; } catch (e) { /* ignore */ }
+        }
+        f = f.return;
+      }
+      return false;
+    }
+
+    function callPropsHandler(el, handlerPropName) {
+      var fiberKey = _findFiberKey(el);
+      if (!fiberKey) return false;
+
+      var f = el[fiberKey];
+      while (f) {
+        var props = f.memoizedProps;
+        if (props && typeof props[handlerPropName] === 'function') {
+          try {
+            props[handlerPropName](props.item);
+            return true;
+          } catch (e) { /* ignore */ }
+        }
+        f = f.return;
+      }
+      return false;
+    }
+
+    return {
+      callComponentMethod: callComponentMethod,
+      callPropsHandler: callPropsHandler
+    };
+  })();
+
+  // ============================================================
+  // 5. EWTH.autoskip — 自动跳题
+  // ============================================================
+  EWTH.autoskip = (function () {
+    var _interval = null;
+    var _lastClicked = null;
+    var COOLDOWN = 5000;
+
+    function _scan() {
       try {
         var all = document.querySelectorAll('button, a, span, div');
         for (var i = 0; i < all.length; i++) {
           var el = all[i];
-          if (el.textContent.trim() === '跳过' && el.offsetParent && !el.dataset._s) {
-            el.dataset._s = '1';
-            reactClick(el);
-            Debug.log('Skip', 'done');
-            setTimeout(function () { delete el.dataset._s; }, 5000);
-            return;
-          }
+          if (!el.offsetParent) continue;
+          var txt = el.textContent.trim();
+          if (txt !== '跳过' && txt !== 'Skip') continue;
+          if (el === _lastClicked) return;
+          _lastClicked = el;
+          try { el.click(); } catch (e) { /* ignore */ }
+          EWTH.logger.info('SKIP', 'done');
+          setTimeout(function () { _lastClicked = null; }, COOLDOWN);
+          return;
         }
-      } catch (e) { }
+      } catch (e) { /* ignore */ }
     }
-  };
 
-  // ==================== 自动过检 ====================
-  var AutoCheckPass = {
-    t: null,
-    toggle: function (on) { on ? this.start() : this.stop(); },
-    start: function () { if (!this.t) this.t = setInterval(this.check, 800); },
-    stop: function () { clearInterval(this.t); this.t = null; },
-    check: function () {
-      try {
-        var btn = document.querySelector('[data-ac="check-pass"]');
-        if (!btn) {
-          var all = document.querySelectorAll('span, div, button');
-          for (var i = 0; i < all.length; i++) {
-            if (all[i].textContent.trim() === '通过检查' && all[i].offsetParent) { btn = all[i]; break; }
-          }
-        }
-        if (!btn || btn.dataset._c) return;
-        btn.dataset._c = '1';
-        reactClick(btn);
-        Debug.log('CheckPass', 'done');
-        setTimeout(function () { delete btn.dataset._c; }, 3000);
-      } catch (e) { }
-    }
-  };
-
-  // ==================== 自动连播 ====================
-  var AutoPlay = {
-    t: null, threshold: 0.85, mode: 'progress85',
-    toggle: function (on) { on ? this.start() : this.stop(); },
-    start: function () { if (!this.t) this.t = setInterval(this.check, 2000); },
-    stop: function () { clearInterval(this.t); this.t = null; },
-    updateMode: function (m) { this.mode = m; if (m === 'progress85') this.threshold = 0.85; },
-
-    check: function () {
-      try {
-        // 直接找活跃项，不依赖容器（.listCon-zRsbh 已随平台更新失效）
-        var active = document.querySelector('.item-blpma.active-EI2Hl');
-        if (!active) return;
-
-        var canNext = false;
-        if (this.mode === 'progress85') {
-          var v = document.querySelector('video');
-          if (!v) return;
-          var cur = v.currentTime, dur = v.duration;
-          if (isNaN(dur) || dur <= 0) return;
-          canNext = cur / dur >= this.threshold;
-        } else {
-          canNext = !!document.getElementById('lesson-finished-container') ||
-                    !!document.querySelector('img[src*="1820894120067424424"]') ||
-                    !!document.querySelector('img[src*="1820894120067448877"]');
-        }
-        if (!canNext) return;
-
-        var next = active.nextElementSibling;
-        while (next) {
-          if (next.classList.contains('item-blpma') &&
-              next.textContent.indexOf('已完成') === -1 &&
-              next.textContent.indexOf('已学完') === -1) {
-            reactClick(next);
-            Debug.log('AutoPlay', 'next');
-            break;
-          }
-          next = next.nextElementSibling;
-        }
-      } catch (e) { }
-    }
-  };
-
-  // ==================== 倍速控制 ====================
-  var SpeedControl = {
-    t: null, target: 2.0,
-    toggle: function (on) { this.target = on ? 2.0 : 1.0; this.apply(); on ? this.start() : this.stop(); },
-    start: function () { if (!this.t) this.t = setInterval(this.apply, 3000); },
-    stop: function () { clearInterval(this.t); this.t = null; },
-    apply: function () {
-      try {
-        // 直接操控 video 元素
-        var v = document.querySelector('video');
-        if (v && v.playbackRate !== this.target) { v.playbackRate = this.target; return; }
-        // 降级：点击 MSTPlayer 倍速菜单
-        var items = document.querySelectorAll('.vjs-playback-rate .vjs-menu-item, .mst-menu-item, .PlaybackRateMenuItem');
-        var targets = ['2x', '2X', '2.0x', '2.0X', '2'];
-        for (var i = 0; i < items.length; i++) {
-          var txt = items[i].textContent.trim();
-          if (targets.indexOf(txt) !== -1 && !items[i].classList.contains('vjs-selected')) {
-            reactClick(items[i]); break;
-          }
-        }
-      } catch (e) { }
-    }
-  };
-
-  // ==================== 倍速警告屏蔽 ====================
-  (function () {
-    document.addEventListener('mouseover', function (e) {
-      if (e.target.tagName === 'LI' && e.target.parentNode &&
-          String(e.target.parentNode.className).indexOf('ccH5spul') !== -1) {
-        e.stopPropagation(); e.stopImmediatePropagation();
+    return {
+      toggle: function (on) {
+        if (on) this.start(); else this.stop();
+      },
+      start: function () {
+        if (_interval) return;
+        _scan();
+        _interval = setInterval(_scan, EWTH.config.INTERVAL.SKIP_CHECK);
+        EWTH.logger.info('SKIP', 'started');
+      },
+      stop: function () {
+        if (_interval) { clearInterval(_interval); _interval = null; }
+        _lastClicked = null;
+        EWTH.logger.info('SKIP', 'stopped');
       }
-    }, true);
-    new MutationObserver(function () {
-      var tips = document.querySelectorAll('.video_speed_tips, [class*="video_speed_tips" i], [class*="speedTips" i]');
-      for (var i = 0; i < tips.length; i++) tips[i].remove();
-    }).observe(document.body, { childList: true, subtree: true });
+    };
   })();
 
-  // ==================== 进度条锁定 ====================
-  var ProgressLock = {
-    on: false, t: null,
-    toggle: function (on) { this.on = on; on ? this.start() : this.stop(); },
-    SEL: '.vjs-progress-holder,.vjs-progress-control,.progressControl,.seekBar,.vjs-slider-horizontal,.vjs-play-progress,.vjs-load-progress,.vjs-seek-bar,.PlayProgressBar,.LoadProgressBar',
-    start: function () {
-      var self = this;
-      var lock = function () {
-        if (!self.on) return;
-        var els = document.querySelectorAll(self.SEL);
-        for (var i = 0; i < els.length; i++) { els[i].style.pointerEvents = 'none'; els[i].style.cursor = 'not-allowed'; }
-      };
-      lock(); this.t = setInterval(lock, 300);
-    },
-    stop: function () {
-      clearInterval(this.t); this.t = null;
-      var els = document.querySelectorAll(this.SEL);
-      for (var i = 0; i < els.length; i++) { els[i].style.pointerEvents = ''; els[i].style.cursor = ''; }
+  // ============================================================
+  // 6. EWTH.checkpass — 自动过检
+  // ============================================================
+  EWTH.checkpass = (function () {
+    var _interval = null;
+    var _lastClicked = null;
+    var COOLDOWN = 3000;
+
+    function _tryClick() {
+      try {
+        var btn = document.querySelector('[data-ac="check-pass"]');
+        if (!btn || !btn.offsetParent) return;
+        if (btn === _lastClicked) return;
+        _lastClicked = btn;
+        EWTH.core.callComponentMethod(btn, 'toCheck');
+        EWTH.logger.info('CHECKPASS', 'done');
+        setTimeout(function () { _lastClicked = null; }, COOLDOWN);
+      } catch (e) { /* ignore */ }
     }
-  };
 
-  // ==================== 刷课模式 ====================
-  var BrushMode = {
-    toggle: function (on) {
-      GUI.setToggle('autoSkip', on); AutoSkip.toggle(on);
-      GUI.setToggle('autoPlay', on); AutoPlay.toggle(on);
-      GUI.setToggle('autoCheckPass', on); AutoCheckPass.toggle(on);
-      GUI.setToggle('speedControl', on); SpeedControl.toggle(on);
-      GUI.setToggle('lockProgress', on); ProgressLock.toggle(on);
+    return {
+      toggle: function (on) {
+        if (on) this.start(); else this.stop();
+      },
+      start: function () {
+        if (_interval) return;
+        _tryClick();
+        _interval = setInterval(_tryClick, EWTH.config.INTERVAL.CHECKPASS_CHECK);
+        EWTH.logger.info('CHECKPASS', 'started');
+      },
+      stop: function () {
+        if (_interval) { clearInterval(_interval); _interval = null; }
+        _lastClicked = null;
+        EWTH.logger.info('CHECKPASS', 'stopped');
+      }
+    };
+  })();
+
+  // ============================================================
+  // 7. EWTH.autoplay — 自动连播（仅看完后模式）
+  // ============================================================
+  EWTH.autoplay = (function () {
+    var _interval = null;
+    var _lastClicked = null;
+    var COOLDOWN = 8000;
+    var PLAYING_ICON = '1821807419093140184';
+
+    function _getActiveItem() {
+      // 策略1: 播放图标（平台在活跃项中渲染此图标，最可靠）
+      var icon = document.querySelector('img[src*="' + PLAYING_ICON + '"]');
+      if (icon) {
+        var el = icon.closest('[data-ac="lesson-item"]');
+        if (el) {
+          EWTH.logger.debug('AUTOPLAY', 'active found via playing icon');
+          return el;
+        }
+      }
+      // 策略2: data-ac + active class
+      var active = document.querySelector('[data-ac="lesson-item"][class*="active"]');
+      if (active) {
+        EWTH.logger.debug('AUTOPLAY', 'active found via data-ac+class');
+        return active;
+      }
+      // 策略3: CSS module hash
+      var items = document.querySelectorAll('.item-blpma');
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].classList.contains('active-EI2Hl')) {
+          EWTH.logger.debug('AUTOPLAY', 'active found via CSS hash');
+          return items[i];
+        }
+      }
+      EWTH.logger.warn('AUTOPLAY', 'active item not found');
+      return null;
     }
-  };
 
-  // ==================== GUI ====================
-  var GUI = {
-    open: false,
-    st: { autoSkip: false, autoPlay: false, autoCheckPass: false, speedControl: false, lockProgress: false, courseBrushMode: false, hasShownGuide: false, playMode: 'progress85' },
+    function _isFinished() {
+      if (document.getElementById('lesson-finished-container')) {
+        return true;
+      }
+      var ids = EWTH.config.FINISHED_IMG_IDS;
+      for (var i = 0; i < ids.length; i++) {
+        if (document.querySelector('img[src*="' + ids[i] + '"]')) {
+          return true;
+        }
+      }
+      return false;
+    }
 
-    init: function () { this.load(); this.injectCSS(); this.makeBtn(); this.makePanel(); this.restore(); this.guide(); },
-    load: function () { try { var c = localStorage.getItem('ewt_helper_cfg'); if (c) this.st = Object.assign(this.st, JSON.parse(c)); } catch (e) { } },
-    save: function () { try { localStorage.setItem('ewt_helper_cfg', JSON.stringify(this.st)); } catch (e) { } },
+    function _findNext(active) {
+      if (!active) return null;
+      var next = active.nextElementSibling;
+      while (next) {
+        var isItem = (next.hasAttribute && next.getAttribute('data-ac') === 'lesson-item') ||
+                     (next.classList && next.classList.contains('item-blpma'));
+        if (isItem) {
+          var txt = next.textContent || '';
+          var finished = false;
+          var fw = EWTH.config.FINISHED_TEXT;
+          for (var i = 0; i < fw.length; i++) {
+            if (txt.indexOf(fw[i]) !== -1) { finished = true; break; }
+          }
+          if (!finished) {
+            EWTH.logger.debug('AUTOPLAY', 'next item found');
+            return next;
+          }
+          EWTH.logger.debug('AUTOPLAY', 'skipping finished item: ' + txt.substring(0, 30));
+        }
+        next = next.nextElementSibling;
+      }
+      EWTH.logger.warn('AUTOPLAY', 'no next unfinished item found');
+      return null;
+    }
 
-    restore: function () {
-      if (this.st.courseBrushMode) { BrushMode.toggle(true); return; }
-      if (this.st.autoSkip) AutoSkip.toggle(true);
-      if (this.st.autoPlay) AutoPlay.toggle(true);
-      if (this.st.autoCheckPass) AutoCheckPass.toggle(true);
-      if (this.st.speedControl) SpeedControl.toggle(true);
-      if (this.st.lockProgress) ProgressLock.toggle(true);
-    },
+    function _doClick(el) {
+      EWTH.core.callPropsHandler(el, 'handleItemClick');
+      EWTH.logger.info('AUTOPLAY', 'next');
+    }
 
-    injectCSS: function () {
+    function _check() {
+      try {
+        if (!_isFinished()) return;
+        EWTH.logger.debug('AUTOPLAY', 'video finished, looking for next...');
+        var active = _getActiveItem();
+        var next = _findNext(active);
+        if (!next || next === _lastClicked) return;
+        _lastClicked = next;
+        _doClick(next);
+        setTimeout(function () { _lastClicked = null; }, COOLDOWN);
+      } catch (e) {
+        EWTH.logger.error('AUTOPLAY', 'check error: ' + e.message);
+      }
+    }
+
+    return {
+      toggle: function (on) {
+        if (on) this.start(); else this.stop();
+      },
+      start: function () {
+        if (_interval) return;
+        EWTH.logger.info('AUTOPLAY', 'started');
+        _check();
+        _interval = setInterval(_check, EWTH.config.INTERVAL.AUTOPLAY_CHECK);
+      },
+      stop: function () {
+        if (_interval) { clearInterval(_interval); _interval = null; }
+        _lastClicked = null;
+        EWTH.logger.info('AUTOPLAY', 'stopped');
+      }
+    };
+  })();
+
+  // ============================================================
+  // 8. EWTH.speed — 2倍速 + checkRate 四层防御
+  // ============================================================
+  EWTH.speed = (function () {
+    var _active = false;
+    var _target = 2.0;
+    var _interval = null;
+
+    function _getVideo() {
+      return document.querySelector('video');
+    }
+
+    function _apply(v) {
+      if (!v) v = _getVideo();
+      if (!v) return;
+      try {
+        if (v.playbackRate !== _target) v.playbackRate = _target;
+      } catch (e) { /* ignore */ }
+    }
+
+    function _hardenVideo(v) {
+      if (!v || v._ewt_hardened) return;
+      v._ewt_hardened = true;
+      try {
+        var desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'playbackRate');
+        if (desc && desc.get && desc.set) {
+          Object.defineProperty(v, 'playbackRate', {
+            get: function () { return desc.get.call(this); },
+            set: function (val) { desc.set.call(this, val); },
+            configurable: false,
+            enumerable: true
+          });
+          EWTH.logger.debug('SPEED', 'hardened video');
+        }
+      } catch (e) {
+        EWTH.logger.debug('SPEED', 'harden failed: ' + e.message);
+      }
+    }
+
+    function _onRateChange(e) {
+      if (!_active) return;
+      var v = e.target;
+      if (v && v.tagName === 'VIDEO' && v.playbackRate !== _target) {
+        setTimeout(function () {
+          try { if (v.playbackRate !== _target) v.playbackRate = _target; } catch (err) { /* ignore */ }
+        }, 0);
+      }
+    }
+
+    return {
+      toggle: function (on) {
+        _active = on;
+        _target = on ? 2.0 : 1.0;
+        var v = _getVideo();
+        _apply(v);
+        if (v) _hardenVideo(v);
+        if (on) this.start(); else this.stop();
+      },
+
+      start: function () {
+        document.addEventListener('ratechange', _onRateChange, true);
+        if (!_interval) {
+          _interval = setInterval(function () {
+            var v = _getVideo();
+            if (v && !v._ewt_hardened) _hardenVideo(v);
+            _apply(v);
+          }, EWTH.config.INTERVAL.SPEED_REAPPLY);
+        }
+        EWTH.logger.info('SPEED', 'started x' + _target);
+      },
+
+      stop: function () {
+        document.removeEventListener('ratechange', _onRateChange, true);
+        if (_interval) { clearInterval(_interval); _interval = null; }
+        EWTH.logger.info('SPEED', 'stopped');
+      },
+
+      _apply: _apply,
+      _hardenVideo: _hardenVideo
+    };
+  })();
+
+  // ============================================================
+  // 9. EWTH.progresslock — 锁定进度条（CSS 注入）
+  // ============================================================
+  EWTH.progresslock = (function () {
+    var _styleEl = null;
+    var BODY_CLASS = 'ewt-progress-locked';
+
+    function _buildCSS() {
+      var sels = EWTH.config.PROGRESS_SELECTORS.join(',\n');
+      return 'body.' + BODY_CLASS + ' ' + sels.replace(/,/g, ',body.' + BODY_CLASS + ' ') +
+             ' { pointer-events: none !important; cursor: not-allowed !important; }';
+    }
+
+    return {
+      toggle: function (on) {
+        if (on) this.start(); else this.stop();
+      },
+      start: function () {
+        if (!_styleEl) {
+          _styleEl = document.createElement('style');
+          _styleEl.id = 'ewt-progress-lock-style';
+          _styleEl.textContent = _buildCSS();
+          document.head.appendChild(_styleEl);
+        }
+        document.body.classList.add(BODY_CLASS);
+        EWTH.logger.info('PROGLOCK', 'locked');
+      },
+      stop: function () {
+        if (_styleEl) { _styleEl.remove(); _styleEl = null; }
+        document.body.classList.remove(BODY_CLASS);
+        EWTH.logger.info('PROGLOCK', 'unlocked');
+      }
+    };
+  })();
+
+  // ============================================================
+  // 10. EWTH.antidetection — 反检测对抗
+  // ============================================================
+  EWTH.antidetection = (function () {
+    var _observer = null;
+
+    function _onMouseOver(e) {
+      if (e.target.tagName === 'LI' && e.target.parentNode &&
+          String(e.target.parentNode.className).indexOf('ccH5spul') !== -1) {
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+      }
+    }
+
+    function _clean() {
+      var joined = EWTH.config.SPEED_TIP_SELECTORS.join(',');
+      var nodes = document.querySelectorAll(joined);
+      for (var i = 0; i < nodes.length; i++) {
+        try { nodes[i].remove(); } catch (e) { /* ignore */ }
+      }
+    }
+
+    return {
+      init: function () {
+        document.addEventListener('mouseover', _onMouseOver, true);
+
+        if (typeof MutationObserver !== 'undefined') {
+          _observer = new MutationObserver(function (mutations) {
+            for (var i = 0; i < mutations.length; i++) {
+              var added = mutations[i].addedNodes;
+              for (var j = 0; j < added.length; j++) {
+                if (added[j].nodeType !== 1) continue;
+                var el = added[j];
+                var sels = EWTH.config.SPEED_TIP_SELECTORS;
+                for (var k = 0; k < sels.length; k++) {
+                  if (el.matches && el.matches(sels[k])) { el.remove(); break; }
+                }
+                if (el.querySelectorAll) {
+                  var children = el.querySelectorAll(sels.join(','));
+                  for (var m = 0; m < children.length; m++) {
+                    try { children[m].remove(); } catch (e) { /* ignore */ }
+                  }
+                }
+              }
+            }
+          });
+          _observer.observe(document.body, { childList: true, subtree: true });
+        }
+
+        _clean();
+        EWTH.logger.info('ANTIDETECT', 'init');
+      }
+    };
+  })();
+
+  // ============================================================
+  // 11. EWTH.brushmode — 一键刷课
+  // ============================================================
+  EWTH.brushmode = (function () {
+    var KEYS = ['autoSkip', 'autoPlay', 'autoCheckPass', 'speedControl', 'lockProgress'];
+    var MODS = {
+      autoSkip:      EWTH.autoskip,
+      autoPlay:      EWTH.autoplay,
+      autoCheckPass: EWTH.checkpass,
+      speedControl:  EWTH.speed,
+      lockProgress:  EWTH.progresslock
+    };
+
+    return {
+      toggle: function (on) {
+        for (var i = 0; i < KEYS.length; i++) {
+          var k = KEYS[i];
+          EWTH.store.set(k, on);
+          MODS[k].toggle(on);
+          if (EWTH.gui && EWTH.gui.syncCheckbox) EWTH.gui.syncCheckbox(k, on);
+        }
+        EWTH.logger.info('BRUSH', on ? 'all ON' : 'all OFF');
+      }
+    };
+  })();
+
+  // ============================================================
+  // 12. EWTH.gui — 浮动控制面板
+  // ============================================================
+  EWTH.gui = (function () {
+    var _open = false;
+    var _panel = null;
+    var _overlay = null;
+    var VERSION = '4.0.0';
+
+    var CSS = [
+      '.ewt4-ct{position:fixed;bottom:20px;right:20px;z-index:99999;font-family:Arial,sans-serif}',
+      '.ewt4-btn{width:50px;height:50px;border-radius:50%;background:#4CAF50;color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 4px 12px rgba(0,0,0,.25);transition:all .3s}',
+      '.ewt4-btn:hover{background:#45a049;transform:scale(1.08)}',
+      '.ewt4-pnl{position:absolute;bottom:60px;right:0;width:280px;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:16px;display:none;flex-direction:column;gap:10px;max-height:80vh;overflow-y:auto}',
+      '.ewt4-pnl.open{display:flex}',
+      '.ewt4-ttl{font-size:18px;font-weight:bold;color:#333;text-align:center}',
+      '.ewt4-ver{font-size:11px;color:#999;text-align:center;margin-bottom:4px}',
+      '.ewt4-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f0f0}',
+      '.ewt4-lbl{font-size:14px;color:#555}',
+      '.ewt4-lbl.br{color:#2196F3;font-weight:bold}',
+      '.ewt4-sw{position:relative;display:inline-block;width:40px;height:24px;flex-shrink:0}',
+      '.ewt4-sw input{opacity:0;width:0;height:0}',
+      '.ewt4-sl{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#ccc;transition:.4s;border-radius:24px}',
+      '.ewt4-sl:before{position:absolute;content:"";height:16px;width:16px;left:4px;bottom:4px;background:#fff;transition:.4s;border-radius:50%}',
+      '.ewt4-sw input:checked+.ewt4-sl{background:#4CAF50}',
+      '.ewt4-sw input:checked+.ewt4-sl:before{transform:translateX(16px)}',
+      '.ewt4-ov{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.75);z-index:99998;display:flex;flex-direction:column;justify-content:center;align-items:center}',
+      '.ewt4-ovt{color:#fff;font-size:22px;font-weight:bold;margin-bottom:20px;text-align:center;line-height:1.6}',
+      '.ewt4-arr{position:fixed;bottom:80px;right:80px;color:#fff;font-size:56px;animation:ewt4-b 1.5s infinite;transform:rotate(45deg)}',
+      '@keyframes ewt4-b{0%,100%{transform:translate(0,0) rotate(45deg)}50%{transform:translate(15px,15px) rotate(45deg)}}',
+      '.ewt4-dbg{padding:6px 0;border-bottom:1px solid #f0f0f0}',
+      '.ewt4-dbg select{width:100%;padding:4px;font-size:12px;border:1px solid #ddd;border-radius:4px}'
+    ].join('\n');
+
+    function _injectCSS() {
       var s = document.createElement('style');
-      s.textContent = '.ewt-ct{position:fixed;bottom:20px;right:20px;z-index:99999;font-family:Arial,sans-serif}.ewt-btn{width:50px;height:50px;border-radius:50%;background:#4CAF50;color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 4px 8px rgba(0,0,0,.2);transition:all .3s}.ewt-btn:hover{background:#45a049;transform:scale(1.05)}.ewt-pnl{position:absolute;bottom:60px;right:0;width:280px;background:#fff;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,.15);padding:15px;display:none;flex-direction:column;gap:10px}.ewt-pnl.open{display:flex}.ewt-ttl{font-size:18px;font-weight:bold;color:#333;margin-bottom:5px;text-align:center}.ewt-ver{font-size:11px;color:#999;text-align:center;margin-bottom:5px}.ewt-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f5f5}.ewt-lbl{font-size:14px;color:#555}.ewt-lbl.br{color:#2196F3;font-weight:bold}.ewt-pg{padding:8px 0;border-bottom:1px solid #f5f5f5}.ewt-pgt{font-size:14px;color:#555;margin-bottom:8px}.ewt-pgb{display:flex;gap:8px}.ewt-pgb button{flex:1;padding:6px 0;border-radius:4px;border:1px solid #ddd;background:#fff;color:#555;cursor:pointer;font-size:13px;transition:all .2s}.ewt-pgb button.ac{background:#4CAF50;color:#fff;border-color:#4CAF50}.ewt-sw{position:relative;display:inline-block;width:40px;height:24px}.ewt-sw input{opacity:0;width:0;height:0}.ewt-sl{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#ccc;transition:.4s;border-radius:24px}.ewt-sl:before{position:absolute;content:"";height:16px;width:16px;left:4px;bottom:4px;background:#fff;transition:.4s;border-radius:50%}input:checked+.ewt-sl{background:#4CAF50}input:checked+.ewt-sl:before{transform:translateX(16px)}.ewt-ov{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:99998;display:flex;flex-direction:column;justify-content:center;align-items:center}.ewt-ovt{color:#fff;font-size:24px;font-weight:bold;margin-bottom:20px;text-align:center;line-height:1.5}.ewt-arr{position:fixed;bottom:80px;right:80px;color:#fff;font-size:60px;font-weight:bold;animation:ewt-b 1.5s infinite;transform:rotate(45deg)}@keyframes ewt-b{0%,100%{transform:translate(0,0) rotate(45deg)}50%{transform:translate(15px,15px) rotate(45deg)}}';
+      s.id = 'ewt4-gui-style';
+      s.textContent = CSS;
       document.head.appendChild(s);
-    },
+    }
 
-    makeBtn: function () {
-      var old = document.querySelector('.ewt-ct'); if (old) old.remove();
-      var ct = document.createElement('div'); ct.className = 'ewt-ct';
-      var b = document.createElement('button'); b.className = 'ewt-btn';
-      b.innerHTML = '\u{1F4DA}'; b.onclick = function () { GUI.toggle(); };
-      ct.appendChild(b); document.body.appendChild(ct);
-    },
-
-    guide: function () {
-      if (this.st.hasShownGuide) return;
-      var ov = document.createElement('div'); ov.className = 'ewt-ov';
-      var t = document.createElement('div'); t.className = 'ewt-ovt';
-      t.innerHTML = '欢迎使用升学E网通助手 v3.0.1 版本<br>点击右下角绿色图标打开控制面板';
-      var a = document.createElement('div'); a.className = 'ewt-arr'; a.textContent = '\u{1F449}';
-      ov.appendChild(t); ov.appendChild(a); document.body.appendChild(ov);
-      this._ov = ov;
-    },
-
-    makePanel: function () {
-      var self = this;
-      var p = document.createElement('div'); p.className = 'ewt-pnl';
-      p.innerHTML = '<div class="ewt-ttl">升学E网通助手</div><div class="ewt-ver">v3.0.1</div>';
-      p.appendChild(this.pg());
-      p.appendChild(this.tg('autoSkip', '自动跳题', AutoSkip));
-      p.appendChild(this.tg('autoPlay', '自动连播', AutoPlay));
-      p.appendChild(this.tg('autoCheckPass', '自动过检', AutoCheckPass));
-      p.appendChild(this.tg('speedControl', '2倍速播放', SpeedControl));
-      p.appendChild(this.tg('lockProgress', '锁定进度条', ProgressLock));
-      p.appendChild(this.tg('courseBrushMode', '刷课模式', BrushMode, true));
-      document.querySelector('.ewt-ct').appendChild(p);
-    },
-
-    pg: function () {
-      var self = this;
-      var g = document.createElement('div'); g.className = 'ewt-pg';
-      var t = document.createElement('div'); t.className = 'ewt-pgt'; t.textContent = '连播模式';
-      g.appendChild(t);
-      var bd = document.createElement('div'); bd.className = 'ewt-pgb';
-      var b1 = document.createElement('button');
-      b1.textContent = '85%进度'; if (this.st.playMode === 'progress85') b1.className = 'ac';
-      b1.onclick = function () { self.st.playMode = 'progress85'; AutoPlay.updateMode('progress85'); self.rfPg(); self.save(); };
-      var b2 = document.createElement('button');
-      b2.textContent = '看完后'; if (this.st.playMode === 'fullPlay') b2.className = 'ac';
-      b2.onclick = function () { self.st.playMode = 'fullPlay'; AutoPlay.updateMode('fullPlay'); self.rfPg(); self.save(); };
-      bd.appendChild(b1); bd.appendChild(b2); g.appendChild(bd);
-      return g;
-    },
-
-    rfPg: function () {
-      var bs = document.querySelectorAll('.ewt-pgb button');
-      bs[0].classList.toggle('ac', this.st.playMode === 'progress85');
-      bs[1].classList.toggle('ac', this.st.playMode === 'fullPlay');
-    },
-
-    tg: function (id, label, mod, isBrush) {
-      var self = this;
-      var row = document.createElement('div'); row.className = 'ewt-row';
-      var lab = document.createElement('label'); lab.className = 'ewt-lbl' + (isBrush ? ' br' : ''); lab.textContent = label;
-      var sw = document.createElement('label'); sw.className = 'ewt-sw';
-      var inp = document.createElement('input'); inp.type = 'checkbox'; inp.id = 'ewt-' + id; inp.checked = !!this.st[id];
-      var sl = document.createElement('span'); sl.className = 'ewt-sl';
+    function _makeToggle(id, label, isBrush) {
+      var row = document.createElement('div');
+      row.className = 'ewt4-row';
+      var lab = document.createElement('label');
+      lab.className = 'ewt4-lbl' + (isBrush ? ' br' : '');
+      lab.textContent = label;
+      var sw = document.createElement('label');
+      sw.className = 'ewt4-sw';
+      var inp = document.createElement('input');
+      inp.type = 'checkbox'; inp.id = 'ewt4-' + id;
+      inp.checked = !!EWTH.store.get(id);
+      var sl = document.createElement('span');
+      sl.className = 'ewt4-sl';
       sw.appendChild(inp); sw.appendChild(sl);
       row.appendChild(lab); row.appendChild(sw);
-      inp.onchange = function (e) { self.st[id] = e.target.checked; self.save(); mod.toggle(e.target.checked); };
+
+      var modMap = {
+        autoSkip: EWTH.autoskip, autoPlay: EWTH.autoplay,
+        autoCheckPass: EWTH.checkpass, speedControl: EWTH.speed,
+        lockProgress: EWTH.progresslock
+      };
+
+      inp.onchange = function () {
+        var checked = inp.checked;
+        EWTH.store.set(id, checked);
+        if (id === 'brushMode') { EWTH.brushmode.toggle(checked); _syncAll(); }
+        else if (modMap[id]) { modMap[id].toggle(checked); _syncBrushMode(); }
+      };
       return row;
-    },
-
-    setToggle: function (id, v) { this.st[id] = v; this.save(); var el = document.getElementById('ewt-' + id); if (el) el.checked = v; },
-
-    toggle: function () {
-      this.open = !this.open;
-      document.querySelector('.ewt-pnl').classList.toggle('open', this.open);
-      if (this.open && this._ov) { this._ov.remove(); this._ov = null; this.st.hasShownGuide = true; this.save(); }
     }
-  };
 
-  // ==================== 启动 ====================
-  var retry = 0;
-  function init() {
-    if (!document.body) return setTimeout(init, 500);
-    try { GUI.init(); } catch (e) { if (retry++ < 5) setTimeout(init, 1000); }
+    function _syncAll() {
+      var ids = ['autoSkip', 'autoPlay', 'autoCheckPass', 'speedControl', 'lockProgress', 'brushMode'];
+      for (var i = 0; i < ids.length; i++) {
+        var el = document.getElementById('ewt4-' + ids[i]);
+        if (el) el.checked = !!EWTH.store.get(ids[i]);
+      }
+    }
+
+    function _syncBrushMode() {
+      var allOn = EWTH.store.get('autoSkip') && EWTH.store.get('autoPlay') &&
+                  EWTH.store.get('autoCheckPass') && EWTH.store.get('speedControl') &&
+                  EWTH.store.get('lockProgress');
+      var el = document.getElementById('ewt4-brushMode');
+      if (el) el.checked = allOn;
+      EWTH.store.set('brushMode', allOn);
+    }
+
+    function _makeDebug() {
+      var row = document.createElement('div');
+      row.className = 'ewt4-dbg';
+      var sel = document.createElement('select');
+      sel.innerHTML = [
+        '<option value="0">调试: 关闭</option>',
+        '<option value="1">调试: 仅错误</option>',
+        '<option value="2">调试: 警告</option>',
+        '<option value="3">调试: 信息</option>',
+        '<option value="4">调试: 详细</option>'
+      ].join('');
+      sel.value = String(EWTH.logger.getLevel());
+      sel.onchange = function () {
+        var lv = parseInt(sel.value, 10);
+        EWTH.logger.setLevel(lv);
+        EWTH.store.set('debugEnabled', lv > 0);
+      };
+      row.appendChild(sel);
+      return row;
+    }
+
+    function _showGuide() {
+      if (EWTH.store.get('hasShownGuide')) return;
+      _overlay = document.createElement('div');
+      _overlay.className = 'ewt4-ov';
+      var t = document.createElement('div');
+      t.className = 'ewt4-ovt';
+      t.innerHTML = '欢迎使用升学E网通助手 v' + VERSION + ' 版本<br>点击右下角绿色图标打开控制面板';
+      var a = document.createElement('div');
+      a.className = 'ewt4-arr';
+      a.textContent = '\u{1F449}';
+      _overlay.appendChild(t); _overlay.appendChild(a);
+      document.body.appendChild(_overlay);
+    }
+
+    return {
+      init: function () {
+        _injectCSS();
+        var ct = document.createElement('div'); ct.className = 'ewt4-ct';
+        var btn = document.createElement('button');
+        btn.className = 'ewt4-btn';
+        btn.textContent = '\u{1F4DA}';
+        btn.title = '升学E网通助手 v' + VERSION;
+        btn.onclick = function () { EWTH.gui.toggle(); };
+        ct.appendChild(btn);
+
+        _panel = document.createElement('div'); _panel.className = 'ewt4-pnl';
+        var ttl = document.createElement('div'); ttl.className = 'ewt4-ttl'; ttl.textContent = '升学E网通助手';
+        var ver = document.createElement('div'); ver.className = 'ewt4-ver'; ver.textContent = 'v' + VERSION;
+        _panel.appendChild(ttl); _panel.appendChild(ver);
+        _panel.appendChild(_makeDebug());
+        _panel.appendChild(_makeToggle('autoSkip', '自动跳题', false));
+        _panel.appendChild(_makeToggle('autoPlay', '自动连播', false));
+        _panel.appendChild(_makeToggle('autoCheckPass', '自动过检', false));
+        _panel.appendChild(_makeToggle('speedControl', '2倍速播放', false));
+        _panel.appendChild(_makeToggle('lockProgress', '锁定进度条', false));
+        _panel.appendChild(_makeToggle('brushMode', '刷课模式（一键全开）', true));
+        ct.appendChild(_panel);
+        document.body.appendChild(ct);
+
+        _showGuide();
+        EWTH.logger.info('GUI', 'ready');
+      },
+
+      toggle: function () {
+        _open = !_open;
+        _panel.classList.toggle('open', _open);
+        if (_open && _overlay) { _overlay.remove(); _overlay = null; EWTH.store.set('hasShownGuide', true); }
+      },
+
+      syncCheckbox: function (id, value) {
+        var el = document.getElementById('ewt4-' + id);
+        if (el) el.checked = value;
+        _syncBrushMode();
+      }
+    };
+  })();
+
+  // ============================================================
+  // 13. BOOTSTRAP — 初始化 & SPA 导航
+  // ============================================================
+  var _bootRetry = 0;
+  var MAX_RETRY = 5;
+  var _booted = false;
+
+  function _boot() {
+    if (_booted) return;
+    if (!document.body) {
+      if (_bootRetry++ < MAX_RETRY) setTimeout(_boot, 500);
+      return;
+    }
+
+    EWTH.store.init();
+    EWTH.antidetection.init();
+    EWTH.gui.init();
+
+    var debugLv = EWTH.store.get('debugEnabled') ? 4 : 0;
+    EWTH.logger.setLevel(debugLv);
+
+    if (EWTH.store.get('brushMode')) {
+      EWTH.brushmode.toggle(true);
+    } else {
+      if (EWTH.store.get('autoSkip'))      EWTH.autoskip.toggle(true);
+      if (EWTH.store.get('autoPlay'))      EWTH.autoplay.toggle(true);
+      if (EWTH.store.get('autoCheckPass')) EWTH.checkpass.toggle(true);
+      if (EWTH.store.get('speedControl'))  EWTH.speed.toggle(true);
+      if (EWTH.store.get('lockProgress'))  EWTH.progresslock.toggle(true);
+    }
+
+    _booted = true;
+    _bootRetry = 0;
+    EWTH.logger.info('BOOT', 'v4.0.0 ready');
   }
-  if (document.readyState === 'complete' || document.readyState === 'interactive') init();
-  else document.addEventListener('DOMContentLoaded', init);
-  window.addEventListener('load', init);
-  new MutationObserver(function (_, ob) {
-    if (document.body && !document.querySelector('.ewt-ct')) { init(); ob.disconnect(); }
-  }).observe(document.documentElement, { childList: true, subtree: true });
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    _boot();
+  } else {
+    document.addEventListener('DOMContentLoaded', _boot);
+  }
+  window.addEventListener('load', _boot);
+
+  if (typeof MutationObserver !== 'undefined') {
+    new MutationObserver(function () {
+      if (document.body && !document.querySelector('.ewt4-ct')) {
+        _booted = false;
+        _boot();
+      }
+      var videos = document.querySelectorAll('video');
+      for (var i = 0; i < videos.length; i++) {
+        if (!videos[i]._ewt_hardened && EWTH.store.get('speedControl')) {
+          EWTH.speed._hardenVideo(videos[i]);
+          EWTH.speed._apply(videos[i]);
+        }
+      }
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  }
+
 })();

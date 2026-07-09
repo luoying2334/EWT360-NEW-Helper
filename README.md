@@ -1,26 +1,25 @@
 # EWT360-NEW-Helper
 
-> **Fork 自 [ZNink/EWT360-Helper](https://github.com/ZNink/EWT360-Helper)**，由 [luoying2334](https://github.com/luoying2334) 独立维护。
+>本项目现已经完全重构，由 [luoying2334](https://github.com/luoying2334) 独立维护。
 
 ![ima](/image/ewt_image.png)
 
 ## 简介
 
 - **名字**：EWT360-NEW-Helper
-- **最新正式版本**: 3.0.1
+- **最新正式版本**: 4.0.0
 - **当前维护者**：[luoying2334](https://github.com/luoying2334)
 - **内容概括**：自动连播、自动过认真度检查、自动跳过课程中的选择题、强制倍速
 - **要求：** 此脚本仅供学习交流，严禁用于商业用途，若有请于24小时内删除，请不要售卖脚本，此脚本完全免费！
 - **协议**：GPL v2
-- **最后更新**：2026.7.7
+- **最后更新**：2026.7.9
 - **关于AI**：由 DeepSeek V4 Pro 参与编写
 
 ### 如果觉得好用，不妨给个Star，这是对我们最大的支持！
 
-## 与原项目的区别
+它能做什么？它有什么优点？：
 
-本仓库基于 EWT360 Helper 独立维护，主要改进：
-
+- 帮你刷EWT360的课程
 - 适配 EWT 平台 2026 年 7 月反外挂升级
 - 持续跟进平台反制措施，保持脚本可用性
 
@@ -39,15 +38,15 @@
 
 | 时间      | 版本号 | 描述                            |
 | --------- | ------ | ------------------------------- |
+| 2026.07.09 | 4.0.0 | 完全重构，与“EWT360-Helper”是两个完全独立的项目，同时跟进了2026.7.9的反外挂更新|
 | 2026.07.07 | 3.0.1 | 所有功能修复完成，均可用|
 | 2026.07.07 | 3.0.0 | 新分支初版，绕过ewt2026.7月反外挂更新|
 
 
 ## 鸣谢
 
-我们非常感谢所有为项目做出贡献的开发者：
 
-**原作者**：[ZNink](https://github.com/ZNink)、[Lirzh](https://github.com/lirzh)、[wesrin2000](https://github.com/wesrin2000)
+本项目参考了 [EWT360-Helper](https://github.com/ZNink/EWT360-Helper)（作者 [ZNink](https://github.com/ZNink)、[Lirzh](https://github.com/lirzh)、[wesrin2000](https://github.com/wesrin2000)）的部分 GUI 代码，特此感谢。
 
 ## 免责声明
 
