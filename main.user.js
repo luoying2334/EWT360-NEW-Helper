@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         升学E网通助手 v4.0.3
-// @version      4.0.3
+// @name         升学E网通助手 v4.0.4
+// @version      4.0.4
 // @description  模块化重构版
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
@@ -301,16 +301,11 @@
           if (el === _lastClicked) return;
           _lastClicked = el;
 
-          // fiber 直调 React onClick
-          var ok = EWTH.core.firePropsClick(el, 'onClick');
-          if (!ok) {
-            var p = el.parentElement;
-            while (p && !ok) {
-              ok = EWTH.core.firePropsClick(p, 'onClick');
-              p = ok ? null : p.parentElement;
-            }
-          }
-          if (!ok) EWTH.logger.warn('SKIP', 'no fiber onClick found');
+          // mstplayer 按钮不在 React fiber 树里，直接用原生 click
+          // （mstplayer 不做 isTrusted 检查，只 React 组件才做）
+          try { el.click(); } catch (e) {}
+          // 同时尝试 fiber（万一外层有 React wrapper）
+          EWTH.core.firePropsClick(el, 'onClick');
 
           EWTH.logger.info('SKIP', 'done');
           setTimeout(function () { _lastClicked = null; }, COOLDOWN);
@@ -400,11 +395,15 @@
       var list = inst.state.videoCatalogueList;
       if (!list || !list.length) return null;
       var cur = inst.state.currentLesson;
+      // 不判断状态，直接找当前课的下一个
+      if (!cur) return list[0];
       for (var i = 0; i < list.length; i++) {
-        if (list[i].status === 2) continue; // 已完成
-        if (cur && list[i].lessonId === cur.lessonId) continue; // 跳过当前
-        return list[i];
+        if (String(list[i].lessonId) === String(cur.lessonId)) {
+          if (i + 1 < list.length) return list[i + 1];
+          return null; // 最后一课
+        }
       }
+      return list[0]; // 当前课不在列表中，从第一个开始
       return null;
     }
 
@@ -663,7 +662,7 @@
     var _open = false;
     var _panel = null;
     var _overlay = null;
-    var VERSION = '4.0.3';
+    var VERSION = '4.0.4';
 
     var CSS = [
       '.ewt4-ct{position:fixed;bottom:20px;right:20px;z-index:99999;font-family:Arial,sans-serif}',
@@ -856,7 +855,7 @@
 
     _booted = true;
     _bootRetry = 0;
-    EWTH.logger.info('BOOT', 'v4.0.3 ready');
+    EWTH.logger.info('BOOT', 'v4.0.4 ready');
   }
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
