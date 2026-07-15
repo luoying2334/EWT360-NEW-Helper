@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         升学E网通助手 v4.0.0
-// @version      4.0.0
+// @name         升学E网通助手 v4.0.2
+// @version      4.0.2
 // @description  模块化重构版
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
@@ -143,46 +143,88 @@
   })();
 
   // ============================================================
-  // 4. EWTH.core — Fiber 直接调用组件方法，绕过 isTrusted
+  // 4. EWTH.core — isTrusted 无法 patch，通过 fiber 直调内部逻辑
   // ============================================================
   EWTH.core = (function () {
 
     function _findFiberKey(el) {
       var keys = Object.keys(el);
       for (var i = 0; i < keys.length; i++) {
-        if (keys[i].indexOf('__reactFiber$') === 0 ||
-            keys[i].indexOf('__reactInternalInstance$') === 0) return keys[i];
+        var k = keys[i];
+        if (k.indexOf('__reactFiber$') === 0 || k.indexOf('__reactInternalInstance$') === 0) return k;
       }
       return null;
     }
 
-    function callComponentMethod(el, methodName) {
-      var fiberKey = _findFiberKey(el);
-      if (!fiberKey) return false;
-
-      var f = el[fiberKey];
+    // 沿 fiber 向上找拥有 methodName 方法的组件实例
+    function _findInst(el, methodName) {
+      var fk = _findFiberKey(el);
+      if (!fk) return null;
+      var f = el[fk];
       while (f) {
         var inst = f.stateNode;
-        if (inst && typeof inst[methodName] === 'function') {
-          try { inst[methodName](); return true; } catch (e) { /* ignore */ }
-        }
+        if (inst && typeof inst[methodName] === 'function') return inst;
         f = f.return;
       }
-      return false;
+      return null;
     }
 
-    function callPropsHandler(el, handlerPropName) {
-      var fiberKey = _findFiberKey(el);
-      if (!fiberKey) return false;
+    // ========= 认真度检测 =========
+    // 平台 isTrusted 无法 monkey-patch → 不能 dispatchEvent → 不能调 _nativeClickHandler
+    // 直接复现 handler 内部的成功路径：stop timer → reportVideoPoint(API) → callback → play
+    function doCheckPass(el) {
+      if (!el) return false;
+      var inst = _findInst(el, '_nativeClickHandler');
+      if (!inst) {
+        EWTH.logger.warn('CORE', 'checkPass comp not found');
+        return false;
+      }
+      try {
+        var p = inst.props;
+        var d = p.contentType;
+        var lessonId = 11 === d ? Number(p.lessonId) + 2000000 : p.lessonId;
+        var ifData = {
+          homeworkId: p.homeworkId,
+          lessonId: lessonId,
+          type: p.interactiveVideo ? 3 : 1 === d ? 1 : 2,
+          interactivePointId: p.interactiveVideo ? 100 : null,
+          platform: 1,
+          seriousCheckResult: 2
+        };
+        // 停止倒计时
+        clearInterval(inst.timerId);
+        // 调用上报 API
+        inst.reportVideoPoint(ifData).then(function (ok) {
+          if (ok) {
+            try { p.callback(true); } catch (e) { /* ignore */ }
+            try { p.oEplayer && p.oEplayer.play(); } catch (e) { /* ignore */ }
+          }
+        });
+        EWTH.logger.info('CORE', 'checkPass done');
+        return true;
+      } catch (err) {
+        EWTH.logger.error('CORE', 'checkPass: ' + err.message);
+        return false;
+      }
+    }
 
-      var f = el[fiberKey];
+    // ========= 连播 / 跳题 =========
+    // React onClick 是闭包，不检查 isTrusted，直接从 fiber 调即可
+    function firePropsClick(el, handlerPropName) {
+      if (!el) return false;
+      var fk = _findFiberKey(el);
+      if (!fk) return false;
+      var f = el[fk];
       while (f) {
         var props = f.memoizedProps;
         if (props && typeof props[handlerPropName] === 'function') {
           try {
-            props[handlerPropName](props.item);
+            props[handlerPropName]();
             return true;
-          } catch (e) { /* ignore */ }
+          } catch (err) {
+            EWTH.logger.warn('CORE', 'props.' + handlerPropName + ' threw: ' + err.message);
+            return false;
+          }
         }
         f = f.return;
       }
@@ -190,8 +232,8 @@
     }
 
     return {
-      callComponentMethod: callComponentMethod,
-      callPropsHandler: callPropsHandler
+      doCheckPass: doCheckPass,
+      firePropsClick: firePropsClick
     };
   })();
 
@@ -213,7 +255,18 @@
           if (txt !== '跳过' && txt !== 'Skip') continue;
           if (el === _lastClicked) return;
           _lastClicked = el;
-          try { el.click(); } catch (e) { /* ignore */ }
+
+          // fiber 直调 React onClick
+          var ok = EWTH.core.firePropsClick(el, 'onClick');
+          if (!ok) {
+            var p = el.parentElement;
+            while (p && !ok) {
+              ok = EWTH.core.firePropsClick(p, 'onClick');
+              p = ok ? null : p.parentElement;
+            }
+          }
+          if (!ok) EWTH.logger.warn('SKIP', 'no fiber onClick found');
+
           EWTH.logger.info('SKIP', 'done');
           setTimeout(function () { _lastClicked = null; }, COOLDOWN);
           return;
@@ -253,7 +306,7 @@
         if (!btn || !btn.offsetParent) return;
         if (btn === _lastClicked) return;
         _lastClicked = btn;
-        EWTH.core.callComponentMethod(btn, 'toCheck');
+        EWTH.core.doCheckPass(btn);
         EWTH.logger.info('CHECKPASS', 'done');
         setTimeout(function () { _lastClicked = null; }, COOLDOWN);
       } catch (e) { /* ignore */ }
@@ -353,8 +406,19 @@
     }
 
     function _doClick(el) {
-      EWTH.core.callPropsHandler(el, 'handleItemClick');
-      EWTH.logger.info('AUTOPLAY', 'next');
+      if (EWTH.core.firePropsClick(el, 'onClick')) {
+        EWTH.logger.info('AUTOPLAY', 'next');
+        return;
+      }
+      // 子元素重试
+      var kids = el.querySelectorAll('div, span, p');
+      for (var i = 0; i < kids.length; i++) {
+        if (EWTH.core.firePropsClick(kids[i], 'onClick')) {
+          EWTH.logger.info('AUTOPLAY', 'next (child)');
+          return;
+        }
+      }
+      EWTH.logger.warn('AUTOPLAY', 'click failed — no onClick found in fiber tree');
     }
 
     function _check() {
@@ -595,7 +659,7 @@
     var _open = false;
     var _panel = null;
     var _overlay = null;
-    var VERSION = '4.0.0';
+    var VERSION = '4.0.2';
 
     var CSS = [
       '.ewt4-ct{position:fixed;bottom:20px;right:20px;z-index:99999;font-family:Arial,sans-serif}',
@@ -788,7 +852,7 @@
 
     _booted = true;
     _bootRetry = 0;
-    EWTH.logger.info('BOOT', 'v4.0.0 ready');
+    EWTH.logger.info('BOOT', 'v4.0.2 ready');
   }
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
