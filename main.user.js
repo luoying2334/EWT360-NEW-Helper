@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         升学E网通助手 v4.0.2
-// @version      4.0.2
+// @name         升学E网通助手 v4.0.3
+// @version      4.0.3
 // @description  模块化重构版
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
@@ -425,12 +425,15 @@
         _lastLessonId = next.lessonId;
         _lastSwitchTime = now;
 
-        inst.changeVideo({
-          courseId: String(inst.state.courseId),
-          lessonId: String(next.lessonId),
-          contentType: next.contentType,
-          lessonName: next.title
-        });
+        // 页面导航到新课——让 React Router 正常加载一切
+        var hashPath = window.location.hash.split('?')[0].replace(/^#+/, '');
+        var sp = new URLSearchParams(window.location.hash.split('?')[1] || '');
+        sp.set('lessonId', String(next.lessonId));
+        sp.set('videoPoint', '0');
+        var newHash = '#' + hashPath + '?' + sp.toString();
+        location.hash = newHash;
+        setTimeout(function () { location.reload(); }, 300);
+
         EWTH.logger.info('AUTOPLAY', 'switched to ' + next.title);
       } catch (e) {
         EWTH.logger.error('AUTOPLAY', 'check error: ' + e.message);
@@ -660,7 +663,7 @@
     var _open = false;
     var _panel = null;
     var _overlay = null;
-    var VERSION = '4.0.2';
+    var VERSION = '4.0.3';
 
     var CSS = [
       '.ewt4-ct{position:fixed;bottom:20px;right:20px;z-index:99999;font-family:Arial,sans-serif}',
@@ -853,7 +856,7 @@
 
     _booted = true;
     _bootRetry = 0;
-    EWTH.logger.info('BOOT', 'v4.0.2 ready');
+    EWTH.logger.info('BOOT', 'v4.0.3 ready');
   }
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
