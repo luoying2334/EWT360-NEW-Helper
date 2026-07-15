@@ -209,31 +209,76 @@
     }
 
     // ========= 连播 / 跳题 =========
-    // React onClick 是闭包，不检查 isTrusted，直接从 fiber 调即可
+    // React onClick 是闭包，直接从 fiber 调。传入 fakeEvent 防止 e.stopPropagation() 等调用 crash
+    var _fakeEvent = {
+      stopPropagation: function(){}, preventDefault: function(){},
+      stopImmediatePropagation: function(){}, nativeEvent: {stopImmediatePropagation: function(){}},
+      isTrusted: true, isPropagationStopped: function(){return false},
+      persist: function(){}, target: null, currentTarget: null
+    };
+
     function firePropsClick(el, handlerPropName) {
       if (!el) return false;
       var fk = _findFiberKey(el);
       if (!fk) return false;
       var f = el[fk];
-      while (f) {
-        var props = f.memoizedProps;
-        if (props && typeof props[handlerPropName] === 'function') {
-          try {
-            props[handlerPropName]();
-            return true;
-          } catch (err) {
-            EWTH.logger.warn('CORE', 'props.' + handlerPropName + ' threw: ' + err.message);
-            return false;
+
+      // BFS，但跳过含按钮文字的元素（导学案/课后习题等）
+      var skipTexts = ['导学案', '课后习题', '练习单', '素养作业', '同类真题'];
+      var queue = [f];
+      while (queue.length) {
+        var cur = queue.shift();
+        if (cur.memoizedProps && typeof cur.memoizedProps[handlerPropName] === 'function') {
+          // 检查关联 DOM 元素是否为子按钮
+          var dom = cur.stateNode;
+          if (dom && dom.nodeType === 1) {
+            var txt = dom.textContent || '';
+            var isSubBtn = false;
+            for (var si = 0; si < skipTexts.length; si++) {
+              if (txt === skipTexts[si] || txt === (skipTexts[si] + ' >')) {
+                isSubBtn = true; break;
+              }
+            }
+            if (isSubBtn) { /* skip, don't enqueue children */ continue; }
           }
+          try {
+            cur.memoizedProps[handlerPropName](_fakeEvent);
+            return true;
+          } catch (e) { /* ignore */ }
         }
-        f = f.return;
+        if (cur.child) queue.push(cur.child);
+        if (cur.sibling) queue.push(cur.sibling);
       }
       return false;
     }
 
+    // ========= 播放器组件定位（从 video 出发） =========
+    function findPlayer() {
+      var v = document.querySelector('video');
+      if (!v) return null;
+      // video 在 mst-player-skin div 里，往上可能有 fiber
+      var el = v;
+      var fk = null;
+      while (el && !fk) {
+        fk = _findFiberKey(el);
+        if (!fk) el = el.parentElement;
+      }
+      if (!el || !fk) return null;
+      var f = el[fk];
+      var d = 0;
+      while (f && d < 20) {
+        var inst = f.stateNode;
+        if (inst && typeof inst.changeVideo === 'function') return inst;
+        f = f.return;
+        d++;
+      }
+      return null;
+    }
+
     return {
       doCheckPass: doCheckPass,
-      firePropsClick: firePropsClick
+      firePropsClick: firePropsClick,
+      findPlayer: findPlayer
     };
   })();
 
@@ -331,106 +376,62 @@
   })();
 
   // ============================================================
-  // 7. EWTH.autoplay — 自动连播（仅看完后模式）
+  // 7. EWTH.autoplay — 自动连播（通过播放器组件 changeVideo 直调）
   // ============================================================
   EWTH.autoplay = (function () {
     var _interval = null;
-    var _lastClicked = null;
+    var _lastLessonId = null;
+    var _lastSwitchTime = 0;
     var COOLDOWN = 8000;
-    var PLAYING_ICON = '1821807419093140184';
-
-    function _getActiveItem() {
-      // 策略1: 播放图标（平台在活跃项中渲染此图标，最可靠）
-      var icon = document.querySelector('img[src*="' + PLAYING_ICON + '"]');
-      if (icon) {
-        var el = icon.closest('[data-ac="lesson-item"]');
-        if (el) {
-          EWTH.logger.debug('AUTOPLAY', 'active found via playing icon');
-          return el;
-        }
-      }
-      // 策略2: data-ac + active class
-      var active = document.querySelector('[data-ac="lesson-item"][class*="active"]');
-      if (active) {
-        EWTH.logger.debug('AUTOPLAY', 'active found via data-ac+class');
-        return active;
-      }
-      // 策略3: CSS module hash
-      var items = document.querySelectorAll('.item-blpma');
-      for (var i = 0; i < items.length; i++) {
-        if (items[i].classList.contains('active-EI2Hl')) {
-          EWTH.logger.debug('AUTOPLAY', 'active found via CSS hash');
-          return items[i];
-        }
-      }
-      EWTH.logger.warn('AUTOPLAY', 'active item not found');
-      return null;
-    }
 
     function _isFinished() {
-      if (document.getElementById('lesson-finished-container')) {
-        return true;
-      }
+      if (document.getElementById('lesson-finished-container')) return true;
       var ids = EWTH.config.FINISHED_IMG_IDS;
       for (var i = 0; i < ids.length; i++) {
-        if (document.querySelector('img[src*="' + ids[i] + '"]')) {
-          return true;
-        }
+        if (document.querySelector('img[src*="' + ids[i] + '"]')) return true;
       }
       return false;
     }
 
-    function _findNext(active) {
-      if (!active) return null;
-      var next = active.nextElementSibling;
-      while (next) {
-        var isItem = (next.hasAttribute && next.getAttribute('data-ac') === 'lesson-item') ||
-                     (next.classList && next.classList.contains('item-blpma'));
-        if (isItem) {
-          var txt = next.textContent || '';
-          var finished = false;
-          var fw = EWTH.config.FINISHED_TEXT;
-          for (var i = 0; i < fw.length; i++) {
-            if (txt.indexOf(fw[i]) !== -1) { finished = true; break; }
-          }
-          if (!finished) {
-            EWTH.logger.debug('AUTOPLAY', 'next item found');
-            return next;
-          }
-          EWTH.logger.debug('AUTOPLAY', 'skipping finished item: ' + txt.substring(0, 30));
-        }
-        next = next.nextElementSibling;
+    function _findNextLesson(inst) {
+      if (!inst || !inst.state) return null;
+      // videoCatalogueList: [{lessonId, title, status, contentType, homeworkId, ...}]
+      // status: 2=已完成, 1=进行中, 0=未开始
+      var list = inst.state.videoCatalogueList;
+      if (!list || !list.length) return null;
+      var cur = inst.state.currentLesson;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].status === 2) continue; // 已完成
+        if (cur && list[i].lessonId === cur.lessonId) continue; // 跳过当前
+        return list[i];
       }
-      EWTH.logger.warn('AUTOPLAY', 'no next unfinished item found');
       return null;
-    }
-
-    function _doClick(el) {
-      if (EWTH.core.firePropsClick(el, 'onClick')) {
-        EWTH.logger.info('AUTOPLAY', 'next');
-        return;
-      }
-      // 子元素重试
-      var kids = el.querySelectorAll('div, span, p');
-      for (var i = 0; i < kids.length; i++) {
-        if (EWTH.core.firePropsClick(kids[i], 'onClick')) {
-          EWTH.logger.info('AUTOPLAY', 'next (child)');
-          return;
-        }
-      }
-      EWTH.logger.warn('AUTOPLAY', 'click failed — no onClick found in fiber tree');
     }
 
     function _check() {
       try {
         if (!_isFinished()) return;
+        var now = Date.now();
+        if (now - _lastSwitchTime < COOLDOWN) return;
+
         EWTH.logger.debug('AUTOPLAY', 'video finished, looking for next...');
-        var active = _getActiveItem();
-        var next = _findNext(active);
-        if (!next || next === _lastClicked) return;
-        _lastClicked = next;
-        _doClick(next);
-        setTimeout(function () { _lastClicked = null; }, COOLDOWN);
+        var inst = EWTH.core.findPlayer();
+        if (!inst) { EWTH.logger.debug('AUTOPLAY', 'player not found'); return; }
+
+        var next = _findNextLesson(inst);
+        if (!next) { EWTH.logger.debug('AUTOPLAY', 'no next lesson'); return; }
+        if (next.lessonId === _lastLessonId && now - _lastSwitchTime < COOLDOWN * 2) return;
+
+        _lastLessonId = next.lessonId;
+        _lastSwitchTime = now;
+
+        inst.changeVideo({
+          courseId: String(inst.state.courseId),
+          lessonId: String(next.lessonId),
+          contentType: next.contentType,
+          lessonName: next.title
+        });
+        EWTH.logger.info('AUTOPLAY', 'switched to ' + next.title);
       } catch (e) {
         EWTH.logger.error('AUTOPLAY', 'check error: ' + e.message);
       }
@@ -442,13 +443,13 @@
       },
       start: function () {
         if (_interval) return;
-        EWTH.logger.info('AUTOPLAY', 'started');
         _check();
         _interval = setInterval(_check, EWTH.config.INTERVAL.AUTOPLAY_CHECK);
+        EWTH.logger.info('AUTOPLAY', 'started');
       },
       stop: function () {
         if (_interval) { clearInterval(_interval); _interval = null; }
-        _lastClicked = null;
+        _lastLessonId = null;
         EWTH.logger.info('AUTOPLAY', 'stopped');
       }
     };
