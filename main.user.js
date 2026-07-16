@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         升学E网通助手 v4.0.4
-// @version      4.0.4
+// @name         升学E网通助手 v4.1.0
+// @version      4.1.0
 // @description  模块化重构版
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
@@ -24,6 +24,8 @@
   var EWTH = {};
 
   EWTH.config = {
+    DEBUG: false, // 调试日志开关
+
     // —— 定时器间隔 (ms) ——
     INTERVAL: {
       SKIP_CHECK:     1500,
@@ -102,7 +104,6 @@
       speedControl:   false,
       lockProgress:   false,
       brushMode:      false,
-      debugEnabled:   false,
       hasShownGuide:  false
     };
 
@@ -390,21 +391,24 @@
 
     function _findNextLesson(inst) {
       if (!inst || !inst.state) return null;
-      // videoCatalogueList: [{lessonId, title, status, contentType, homeworkId, ...}]
-      // status: 2=已完成, 1=进行中, 0=未开始
       var list = inst.state.videoCatalogueList;
       if (!list || !list.length) return null;
       var cur = inst.state.currentLesson;
-      // 不判断状态，直接找当前课的下一个
       if (!cur) return list[0];
+      var curIdx = -1;
       for (var i = 0; i < list.length; i++) {
-        if (String(list[i].lessonId) === String(cur.lessonId)) {
-          if (i + 1 < list.length) return list[i + 1];
-          return null; // 最后一课
-        }
+        if (String(list[i].lessonId) === String(cur.lessonId)) { curIdx = i; break; }
       }
-      return list[0]; // 当前课不在列表中，从第一个开始
-      return null;
+      if (curIdx === -1) return list[0];
+      // 先从当前位置往后找未完成的
+      for (var j = curIdx + 1; j < list.length; j++) {
+        if (list[j].status !== 2) return list[j];
+      }
+      // 再从开头找未完成的（绕回）
+      for (var k = 0; k < curIdx; k++) {
+        if (list[k].status !== 2) return list[k];
+      }
+      return null; // 全部完成
     }
 
     function _check() {
@@ -418,7 +422,13 @@
         if (!inst) { EWTH.logger.debug('AUTOPLAY', 'player not found'); return; }
 
         var next = _findNextLesson(inst);
-        if (!next) { EWTH.logger.debug('AUTOPLAY', 'no next lesson'); return; }
+        if (!next) {
+          EWTH.logger.info('AUTOPLAY', 'all lessons done, redirecting to task overview');
+          var hwId = inst.state.homeworkId || '';
+          try { sessionStorage.setItem('ewt_nextday_auto', '1'); } catch (e) {}
+          location.href = location.pathname + location.search + '#/holiday/student-task-overview?homeworkId=' + hwId;
+          return;
+        }
         if (next.lessonId === _lastLessonId && now - _lastSwitchTime < COOLDOWN * 2) return;
 
         _lastLessonId = next.lessonId;
@@ -458,7 +468,88 @@
   })();
 
   // ============================================================
-  // 8. EWTH.speed — 2倍速 + checkRate 四层防御
+  // 8. EWTH.nextday — 任务页自动跳下一天
+  // ============================================================
+  EWTH.nextday = (function () {
+
+    function _simClick(el) {
+      var r = el.getBoundingClientRect();
+      var opts = { bubbles: true, cancelable: true, view: window,
+        clientX: r.left + r.width/2, clientY: r.top + r.height/2,
+        screenX: r.left + r.width/2, screenY: r.top + r.height/2, button: 0 };
+      try { el.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch (e) {}
+      try { el.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
+      try { el.dispatchEvent(new PointerEvent('pointerup', opts)); } catch (e) {}
+      try { el.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
+      try { el.dispatchEvent(new MouseEvent('click', opts)); } catch (e) {}
+    }
+
+    function run() {
+      if (location.hash.indexOf('/holiday/student-task-overview') === -1) return;
+      var autoFlag = '';
+      try { autoFlag = sessionStorage.getItem('ewt_nextday_auto') || ''; } catch (e) {}
+      if (autoFlag !== '1') return;
+      try { sessionStorage.removeItem('ewt_nextday_auto'); } catch (e) {}
+
+      function _try(count) {
+        var lis = document.querySelectorAll('.tabs-wldGh li');
+        if (!lis.length) { setTimeout(function () { _try(count + 1); }, 400); return; }
+
+        var activeIdx = -1;
+        for (var i = 0; i < lis.length; i++) {
+          if (lis[i].getAttribute('data-active') === 'true') { activeIdx = i; break; }
+        }
+        if (activeIdx === -1) { setTimeout(function () { _try(count + 1); }, 400); return; }
+
+        var ct = (lis[activeIdx].textContent || '').trim();
+        var cm = ct.match(/完成(\d+)\/(\d+)/);
+        var done = cm && cm[1] === cm[2];
+
+        if (!done) { _findAndClickBtn(); return; }
+
+        var nextLI = null;
+        for (var j = activeIdx + 1; j < lis.length; j++) {
+          if (lis[j].getAttribute('data-active') === 'text') continue;
+          var tt = (lis[j].textContent || '').trim();
+          var mm = tt.match(/完成(\d+)\/(\d+)/);
+          if (mm && mm[1] === mm[2]) continue;
+          nextLI = lis[j]; break;
+        }
+        if (!nextLI) { EWTH.logger.info('NEXTDAY', 'all days done'); return; }
+
+        _simClick(nextLI);
+        EWTH.logger.info('NEXTDAY', 'switched day');
+        setTimeout(function () { _findAndClickBtn(); }, 1500);
+      }
+
+      function _findAndClickBtn(attempt) {
+        attempt = attempt || 0;
+        var btns = document.querySelectorAll('.btn-AoqsA');
+        for (var i = 0; i < btns.length; i++) {
+          var txt = (btns[i].textContent || '').trim();
+          var df = btns[i].getAttribute('data-finish');
+          if (txt.indexOf('学') === 0 && df !== 'true') {
+            _simClick(btns[i]);
+            var p = btns[i].parentElement;
+            while (p && p.tagName !== 'LI') p = p.parentElement;
+            if (p) _simClick(p);
+            EWTH.logger.info('NEXTDAY', 'lesson clicked');
+            return;
+          }
+        }
+        if (attempt < 15) setTimeout(function () { _findAndClickBtn(attempt + 1); }, 400);
+        else { var l = document.querySelector('a[href*="play-videos"]'); if (l) location.href = l.href; }
+      }
+
+      setTimeout(function () { _try(0); }, 1000);
+    }
+
+    window.addEventListener('hashchange', function () { run(); });
+    return { run: run };
+  })();
+
+  // ============================================================
+  // 9. EWTH.speed — 2倍速 + checkRate 四层防御
   // ============================================================
   EWTH.speed = (function () {
     var _active = false;
@@ -662,7 +753,7 @@
     var _open = false;
     var _panel = null;
     var _overlay = null;
-    var VERSION = '4.0.4';
+    var VERSION = '4.1.0';
 
     var CSS = [
       '.ewt4-ct{position:fixed;bottom:20px;right:20px;z-index:99999;font-family:Arial,sans-serif}',
@@ -685,8 +776,6 @@
       '.ewt4-ovt{color:#fff;font-size:22px;font-weight:bold;margin-bottom:20px;text-align:center;line-height:1.6}',
       '.ewt4-arr{position:fixed;bottom:80px;right:80px;color:#fff;font-size:56px;animation:ewt4-b 1.5s infinite;transform:rotate(45deg)}',
       '@keyframes ewt4-b{0%,100%{transform:translate(0,0) rotate(45deg)}50%{transform:translate(15px,15px) rotate(45deg)}}',
-      '.ewt4-dbg{padding:6px 0;border-bottom:1px solid #f0f0f0}',
-      '.ewt4-dbg select{width:100%;padding:4px;font-size:12px;border:1px solid #ddd;border-radius:4px}'
     ].join('\n');
 
     function _injectCSS() {
@@ -744,27 +833,6 @@
       EWTH.store.set('brushMode', allOn);
     }
 
-    function _makeDebug() {
-      var row = document.createElement('div');
-      row.className = 'ewt4-dbg';
-      var sel = document.createElement('select');
-      sel.innerHTML = [
-        '<option value="0">调试: 关闭</option>',
-        '<option value="1">调试: 仅错误</option>',
-        '<option value="2">调试: 警告</option>',
-        '<option value="3">调试: 信息</option>',
-        '<option value="4">调试: 详细</option>'
-      ].join('');
-      sel.value = String(EWTH.logger.getLevel());
-      sel.onchange = function () {
-        var lv = parseInt(sel.value, 10);
-        EWTH.logger.setLevel(lv);
-        EWTH.store.set('debugEnabled', lv > 0);
-      };
-      row.appendChild(sel);
-      return row;
-    }
-
     function _showGuide() {
       if (EWTH.store.get('hasShownGuide')) return;
       _overlay = document.createElement('div');
@@ -794,7 +862,6 @@
         var ttl = document.createElement('div'); ttl.className = 'ewt4-ttl'; ttl.textContent = '升学E网通助手';
         var ver = document.createElement('div'); ver.className = 'ewt4-ver'; ver.textContent = 'v' + VERSION;
         _panel.appendChild(ttl); _panel.appendChild(ver);
-        _panel.appendChild(_makeDebug());
         _panel.appendChild(_makeToggle('autoSkip', '自动跳题', false));
         _panel.appendChild(_makeToggle('autoPlay', '自动连播', false));
         _panel.appendChild(_makeToggle('autoCheckPass', '自动过检', false));
@@ -840,8 +907,10 @@
     EWTH.antidetection.init();
     EWTH.gui.init();
 
-    var debugLv = EWTH.store.get('debugEnabled') ? 4 : 0;
-    EWTH.logger.setLevel(debugLv);
+    // 任务页自动跳下一天
+    EWTH.nextday.run();
+
+    EWTH.logger.setLevel(EWTH.config.DEBUG ? 4 : 0);
 
     if (EWTH.store.get('brushMode')) {
       EWTH.brushmode.toggle(true);
@@ -855,7 +924,7 @@
 
     _booted = true;
     _bootRetry = 0;
-    EWTH.logger.info('BOOT', 'v4.0.4 ready');
+    EWTH.logger.info('BOOT', 'v4.1.0 ready');
   }
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
