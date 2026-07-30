@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         升学E网通助手 v4.2.0
-// @version      4.2.0
-// @description  适配2026.7.23平台更新：FiberGuard绕过 + CAPTCHA滑块适配 + API拦截
+// @name         升学E网通助手 v4.3.0
+// @version      4.3.0
+// @description  适配2026.7.30平台更新：_submitEarnestCheck绕过 + addVideoss拦截 + Context修补 + em标记防护
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        https://web.ewt360.com/site-study/*
@@ -30,17 +30,17 @@
     // —— 定时器间隔 (ms) ——
     INTERVAL: {
       SKIP_CHECK:      1500,
-      CHECKPASS_CHECK:  800,
+      CHECKPASS_CHECK:  500,
       AUTOPLAY_CHECK:  2000,
       SPEED_REAPPLY:   3000,
-      CONTEXT_PATCH:   1000
+      CONTEXT_PATCH:    300
     },
 
-    // —— API 端点 (2026.7.23 更新) ——
-    // _doReportVideoPoint → reportVideoPoint(旧) | 其他组件 → addVideocss(新)
+    // —— API 端点 (2026.7.30 更新) ——
+    // ev组件: _submitEarnestCheck→ep()→addVideoss(双s) | ek组件: reportVideoPoint→addVideocss(双c)
     API: {
-      REPORT_VIDEO: '/api/homeworkprod/homework/student/reportVideoPoint', // 旧API (_doReportVideoPoint用)
-      VIDEO_CHECK:  '/api/homeworkprod/homework/student/addVideocss',      // 新API (备用fallback)
+      ADD_VIDEOSS:  '/api/homeworkprod/homework/student/addVideoss',       // ev简单检测提交: {success,data:1|0|2}
+      ADD_VIDEOCSS: '/api/homeworkprod/homework/student/addVideocss',      // ek CAPTCHA检测提交: {success}
       ADD_BLACK:    '/api/homeworkprod/homework/student/addStudp',
       GET_BLACK:    '/api/homeworkprod/homework/student/getVideodp',
       DOWNGRADE:    '/api/eteacherproduct/downgrade/getSeriousCheckDownGradeConfig',
@@ -168,7 +168,7 @@
   })();
 
   // ============================================================
-  // 4. EWTH.apiIntercept — 黑名单 API 拦截 (NEW v4.2.0)
+  // 4. EWTH.apiIntercept — API 拦截 (v4.3.0 更新)
   // ============================================================
   EWTH.apiIntercept = (function () {
     var _intercepted = false;
@@ -178,8 +178,10 @@
     ];
 
     var FAKE_MAP = {};
-    FAKE_MAP[EWTH.config.API.GET_BLACK]   = '{"data":false}';    // 始终返回"非黑名单"
-    FAKE_MAP[EWTH.config.API.DOWNGRADE]   = '{"data":{"seriousCheckDownGrade":true}}'; // 降级配置
+    FAKE_MAP[EWTH.config.API.ADD_VIDEOSS]  = '{"success":true,"data":1}';  // 简单检测: _submitEarnestCheck读data, reportVideoPoint读success
+    FAKE_MAP[EWTH.config.API.ADD_VIDEOCSS] = '{"success":true}';           // CAPTCHA检测: ek.reportVideoPoint读success
+    FAKE_MAP[EWTH.config.API.GET_BLACK]    = '{"data":false}';             // 始终返回"非黑名单"
+    FAKE_MAP[EWTH.config.API.DOWNGRADE]    = '{"data":{"seriousCheckDownGrade":true}}'; // 降级配置
 
     function _matchAny(url, patterns) {
       for (var i = 0; i < patterns.length; i++) {
@@ -308,7 +310,7 @@
   })();
 
   // ============================================================
-  // 5. EWTH.core — Fiber 工具 + 原型方法绕过 (v4.2.0 重写)
+  // 5. EWTH.core — Fiber 工具 + 认真度检测绕过 (v4.3.0 重写)
   // ============================================================
   EWTH.core = (function () {
 
@@ -351,18 +353,19 @@
       return null;
     }
 
-    // ========= 认真度检测 bypass (v4.2.0 重写) =========
-    // 平台 guard 模式 (homework-play-video pos~29678):
-    //   constructor 中: this.reportVideoPoint = async e => { if(!em){em=!0;...} return !1 }
-    //   → reportVideoPoint 从构造时就已是 guard，永远返回 false
-    //   → 但 _doReportVideoPoint 是未被保护的原始 API 方法
-    //   → 正常流程 _nativeClickHandler (isTrusted检查通过后) 调的是 _doReportVideoPoint
-    // 绕过方案: 直接调 _doReportVideoPoint，跳过 isTrusted/instanceof 检查
+    // ========= 认真度检测 bypass (v4.3.0 重写) =========
+    // 平台 2026.7.30 ev 组件 (homework-play-video):
+    //   reportVideoPoint → GUARD (constructor: if(!em){em=!0;updateIsBlacklisted(...)} return !1)
+    //   _doReportVideoPoint → TRAP (Modal.warning + updateIsBlacklisted)
+    //   _submitEarnestCheck → REAL (调 ep()→POST addVideoss→返回{data:1|0|2})
+    //   toCheck → GUARD (constructor)
+    //   _nativeClickHandler → REAL (isTrusted+instanceof校验通过后调_submitEarnestCheck)
+    // 绕过方案: 直接调 _submitEarnestCheck, API拦截确保返回1(通过)
     function doCheckPass(el) {
       if (!el) return false;
-      var inst = _findInst(el, '_nativeClickHandler');
+      var inst = _findInstByState(el, 'earnestCurrentSecond');
       if (!inst) {
-        inst = _findInstByState(el, 'earnestCurrentSecond');
+        inst = _findInst(el, '_nativeClickHandler');
       }
       if (!inst) {
         EWTH.logger.warn('CORE', 'checkPass comp not found');
@@ -379,52 +382,86 @@
           type: p.interactiveVideo ? 3 : 1 === d ? 1 : 2,
           interactivePointId: p.interactiveVideo ? 100 : null,
           platform: 1,
-          seriousCheckResult: 2
+          seriousCheckResult: 2   // 2 = successLog
         };
 
-        // 步骤1: 停止倒计时
-        try { clearInterval(inst.timerId); } catch (e2) { /* ignore */ }
+        // 步骤1: 停止倒计时 (防止30秒超时提交 errorLog)
+        try { clearInterval(inst.timerId); } catch (e2) {}
 
-        // 步骤2: 调用 _doReportVideoPoint (未被 guard 保护!)
-        // 平台正常代码流: _nativeClickHandler → _doReportVideoPoint(interfaceData)
-        // 注意: alertVideoPoint 在 constructor 中已被替换为 guard (永远返回 false)
-        var doReport = inst._doReportVideoPoint;
-        if (typeof doReport === 'function') {
-          EWTH.logger.debug('CORE', 'using _doReportVideoPoint');
-          doReport.call(inst, ifData).then(function (result) {
+        // 步骤2: 调用 _submitEarnestCheck (真正的检测提交方法)
+        // 平台代码: this._submitEarnestCheck = async e => {
+        //   try { let{data:t}=await ep(e); return t } // ep()→POST addVideoss
+        //   catch(e) { return console.error(...), !1 }
+        // }
+        // API拦截已将addVideoss伪造为 {"success":true,"data":1}, 所以t===1
+        var submitCheck = inst._submitEarnestCheck;
+        if (typeof submitCheck === 'function') {
+          EWTH.logger.debug('CORE', 'using _submitEarnestCheck');
+          submitCheck.call(inst, ifData).then(function (result) {
             if (result === 1) {
-              // 与平台原生逻辑一致: 1===result → callback(true) + play
-              try { p.callback(true); } catch (e3) { /* ignore */ }
-              try { p.oEplayer && p.oEplayer.resumeHotKeys && p.oEplayer.resumeHotKeys(); } catch (e3) { /* ignore */ }
-              try { p.oEplayer && p.oEplayer.play && p.oEplayer.play(); } catch (e3) { /* ignore */ }
+              // 平台原生成功流程:
+              //   1===e?(d(!0),c.message.success("你真棒，通过检测～"),p&&p.play&&p.play())
+              try { p.callback(true); } catch (e3) {}
+              try { p.oEplayer && p.oEplayer.resumeHotKeys && p.oEplayer.resumeHotKeys(); } catch (e3) {}
+              try { p.oEplayer && p.oEplayer.play && p.oEplayer.play(); } catch (e3) {}
+              EWTH.logger.info('CORE', 'checkPass success');
+            } else if (result === 0) {
+              EWTH.logger.warn('CORE', 'check returned 0 (failed), re-triggering');
+              // 重新调一次 (有时API需要预热)
+              submitCheck.call(inst, ifData).then(function (r2) {
+                if (r2 === 1) {
+                  try { p.callback(true); } catch (e3) {}
+                  try { p.oEplayer && p.oEplayer.play && p.oEplayer.play(); } catch (e3) {}
+                }
+              });
+            } else if (result === 2) {
+              EWTH.logger.warn('CORE', 'check returned 2 (abnormal), using direct API');
+              // 直接调API
+              fetch(EWTH.config.API.ADD_VIDEOSS, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(ifData)
+              }).then(function (r) { return r.json(); })
+                .then(function (resp) {
+                  if (resp && (resp.data === 1 || resp.success)) {
+                    try { p.callback(true); } catch (e3) {}
+                    try { p.oEplayer && p.oEplayer.play && p.oEplayer.play(); } catch (e3) {}
+                  }
+                }).catch(function () {});
             }
-          }).catch(function () { /* ignore */ });
+          }).catch(function () {});  // 忽略异常, 不影响 setState 清理
         } else {
-          // 兜底: 直接调 API
-          EWTH.logger.debug('CORE', 'fallback: direct API');
-          fetch(EWTH.config.API.VIDEO_CHECK, {
+          // ek组件没有_submitEarnestCheck, 走直接API
+          EWTH.logger.debug('CORE', 'no _submitEarnestCheck, direct API (ek mode)');
+          fetch(EWTH.config.API.ADD_VIDEOCSS, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(ifData)
           }).then(function (r) { return r.json(); })
-            .then(function (result) {
-              if (result && result.success) {
-                try { p.callback(true); } catch (e3) { /* ignore */ }
-                try { p.oEplayer && p.oEplayer.play && p.oEplayer.play(); } catch (e3) { /* ignore */ }
+            .then(function (resp) {
+              if (resp && resp.success) {
+                try { p.callback(true); } catch (e3) {}
+                try { p.oEplayer && p.oEplayer.play && p.oEplayer.play(); } catch (e3) {}
               }
-            }).catch(function () { /* ignore */ });
+            }).catch(function () {});
         }
 
-        // 步骤3: 操作组件状态，隐藏检测 UI
+        // 步骤3: 操作 state 隐藏检测 UI
+        // 平台 ev state: { earnestCurrentSecond, timeVisible, unCheckVisible }
+        // 主播放器 eT state: { earnestCheckVisible }
         try {
           inst.setState({
             earnestCurrentSecond: 30,
             timeVisible: false,
             unCheckVisible: false
           });
-        } catch (e2) { /* ignore */ }
+          // 同时隐藏主播放器的 earnestCheckVisible
+          var playerInst = _findInstByState(el, 'earnestCheckVisible');
+          if (playerInst) {
+            playerInst.setState({ earnestCheckVisible: false });
+          }
+        } catch (e2) {}
 
-        EWTH.logger.info('CORE', 'checkPass done');
         return true;
       } catch (err) {
         EWTH.logger.error('CORE', 'checkPass: ' + err.message);
@@ -432,12 +469,22 @@
       }
     }
 
-    // ========= 上下文黑名单状态修补 =========
-    // 平台 Context Provider O 是函数组件 (useState)，state 存储在 fiber.memoizedState
-    // 不能用 patchBlacklistState(prev) 的 stateNode.state 方式访问
-    // 方案: 调用 inst.context.getVideodp() → 触发 API 重查 → 我们拦截返回 false → isBlacklisted 被置为 false
+    // ========= 上下文黑名单状态修补 (v4.3.0 增强) =========
+    // 平台 Context Provider O (homework-play-video):
+    //   let [isBlacklisted, setIsBlacklisted] = useState(false)
+    //   let getVideodp = async() => {
+    //     let{data}=await GET("/api/.../getVideodp"); setIsBlacklisted(!!data)
+    //   }
+    //   let updateIsBlacklisted = async(eventData) => {
+    //     await GET("/api/.../addStudp");
+    //     A.ZP.warn(eventData, "student_watch_class_anticheat")
+    //   }
+    //
+    // 平台 renderEarnestCheck: isBlacklisted ? <ek(CAPTCHA) .../> : <ev(简单) .../>
+    //
+    // 策略: 1) 覆盖updateIsBlacklisted为空操作 2) 强制isBlacklisted=false
+    // API拦截已确保getVideodp始终返回false, addStudp被静默屏蔽
     function patchBlacklistState(el) {
-      // 找 earnest check 组件实例 (它有 context 引用)
       var inst = _findInstByState(el, 'earnestCurrentSecond');
       if (!inst) {
         inst = _findInst(el, '_nativeClickHandler');
@@ -445,19 +492,32 @@
       if (!inst || !inst.context) return false;
 
       try {
-        // 方式1: 触发 getVideodp() 重查 (API 已被我们拦截, 永远返回 {data:false})
-        if (typeof inst.context.getVideodp === 'function') {
-          inst.context.getVideodp();
-          EWTH.logger.info('CORE', 'triggered getVideodp re-query');
-          return true;
+        // 方式1: 将 updateIsBlacklisted 替换为 no-op
+        // 平台: updateIsBlacklisted接收{type:"UNTRUSTED_EVENT",desc,message,lessonId,homeworkId,url,cheatParams}
+        // 即使API已拦截addStudp, 替换updateIsBlacklisted可以防止A.ZP.warn被调用
+        if (typeof inst.context.updateIsBlacklisted === 'function') {
+          if (!inst.context._ewt_original_update) {
+            inst.context._ewt_original_update = inst.context.updateIsBlacklisted;
+          }
+          inst.context.updateIsBlacklisted = function () {
+            EWTH.logger.info('CORE', 'blocked updateIsBlacklisted');
+          };
         }
-        // 方式2: 直接篡改 context 值 (备选)
+
+        // 方式2: 强制 isBlacklisted = false
+        // 防止 ek (CAPTCHA) 组件被渲染
         if (inst.context.isBlacklisted) {
           inst.context.isBlacklisted = false;
           try { inst.forceUpdate && inst.forceUpdate(); } catch (e) {}
-          EWTH.logger.info('CORE', 'direct patched context.isBlacklisted');
-          return true;
+          EWTH.logger.info('CORE', 'cleared isBlacklisted');
         }
+
+        // 方式3: 触发 getVideodp() 让Context刷新 (API拦截确保返回false)
+        if (typeof inst.context.getVideodp === 'function') {
+          inst.context.getVideodp();
+        }
+
+        return true;
       } catch (e) {
         EWTH.logger.warn('CORE', 'patchBlacklist error: ' + e.message);
       }
@@ -539,7 +599,7 @@
   })();
 
   // ============================================================
-  // 6. EWTH.autoskip — 自动跳题 (v4.2.0 更新)
+  // 6. EWTH.autoskip — 自动跳题 (v4.3.0)
   // ============================================================
   EWTH.autoskip = (function () {
     var _interval = null;
@@ -588,7 +648,7 @@
   })();
 
   // ============================================================
-  // 7. EWTH.checkpass — 自动过检 (v4.2.0 重写，双模式适配)
+  // 7. EWTH.checkpass — 自动过检 (v4.3.0 重写，CAPTCHA 直接绕过)
   // ============================================================
   EWTH.checkpass = (function () {
     var _interval = null;
@@ -604,9 +664,9 @@
       '[id*="captcha" i]'
     ];
 
+    // 处理 CAPTCHA 模式 (isBlacklisted=true 时渲染 ek 组件)
     function _handleCaptcha() {
       try {
-        // 策略: 找到 CAPTCHA 容器并尝试触发其内部 success 回调
         var captchaEl = null;
         for (var i = 0; i < CAPTCHA_SELECTORS.length; i++) {
           captchaEl = document.querySelector(CAPTCHA_SELECTORS[i]);
@@ -615,25 +675,54 @@
         }
         if (!captchaEl) return false;
 
-        // 尝试通过 Fiber 找到 CAPTCHA 实例
-        var fk = EWTH.core.findFiberKey(captchaEl);
-        if (!fk) return false;
-        var f = captchaEl[fk];
-
-        // 在 fiber 树中找到拥有 success 回调的 earnest check 组件
-        var depth = 0;
-        while (f && depth < 30) {
-          var inst = f.stateNode;
-          if (inst && inst.state && inst.state.hasOwnProperty('earnestCurrentSecond')) {
-            // 找到了认真度检测组件。CAPTCHA 的成功回调已经绑定。
-            // 策略: 不模拟 CAPTCHA 滑块, 而是直接走 bypass 路径
-            EWTH.core.doCheckPass(captchaEl);
-            EWTH.logger.info('CHECKPASS', 'captcha mode bypass');
-            return true;
+        // 找 ek 组件实例 (CAPTCHA 检测组件)
+        var ekInst = EWTH.core.findInstByState(captchaEl, 'earnestCurrentSecond');
+        if (!ekInst) {
+          // 尝试从 DOM 向上找
+          var fk = EWTH.core.findFiberKey(captchaEl);
+          if (fk) {
+            var f = captchaEl[fk];
+            var depth = 0;
+            while (f && depth < 30) {
+              var inst = f.stateNode;
+              if (inst && inst.state && inst.state.hasOwnProperty('earnestCurrentSecond')) {
+                ekInst = inst; break;
+              }
+              f = f.return;
+              depth++;
+            }
           }
-          f = f.return;
-          depth++;
         }
+        if (!ekInst) return false;
+
+        var ekP = ekInst.props;
+        var d = ekP.contentType;
+        var ifData = {
+          homeworkId: ekP.homeworkId,
+          lessonId: 11 === d ? Number(ekP.lessonId) + 2000000 : ekP.lessonId,
+          type: ekP.interactiveVideo ? 3 : 1 === d ? 1 : 2,
+          interactivePointId: ekP.interactiveVideo ? 100 : null,
+          platform: 1,
+          seriousCheckResult: 2
+        };
+
+        // 直接调 addVideocss API (已被拦截返回 {success:true})
+        fetch(EWTH.config.API.ADD_VIDEOCSS, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(ifData)
+        }).then(function (r) { return r.json(); })
+          .then(function (result) {
+            if (result && result.success) {
+              try { clearInterval(ekInst.timerId); } catch (e2) {}
+              try { ekInst.setState({ earnestCurrentSecond: 30, timeVisible: false, unCheckVisible: false }); } catch (e2) {}
+              try { ekP.callback(true); } catch (e2) {}
+              try { ekP.oEplayer && ekP.oEplayer.play && ekP.oEplayer.play(); } catch (e2) {}
+              EWTH.logger.info('CHECKPASS', 'CAPTCHA bypassed via direct API');
+            }
+          }).catch(function () {});
+
+        return true;
       } catch (e) {
         EWTH.logger.warn('CHECKPASS', 'captcha err: ' + e.message);
       }
@@ -642,12 +731,20 @@
 
     function _tryClick() {
       try {
-        // 持续修补 isBlacklisted 状态 —— 防止 CAPTCHA 模式激活
+        // 持续修补 isBlacklisted + updateIsBlacklisted (防 CAPTCHA 模式)
         if (document.body) {
           EWTH.core.patchBlacklistState(document.body);
         }
 
-        // 查找认真度检测按钮
+        // 先检查 CAPTCHA 模式 (ek 组件已渲染, isBlacklisted=true)
+        var captchaEl = document.querySelector('#captcha');
+        if (captchaEl && captchaEl.offsetParent) {
+          EWTH.logger.warn('CHECKPASS', 'CAPTCHA mode detected, attempting bypass');
+          _handleCaptcha();
+          // 继续执行 ev 查找, 以防两者同时存在
+        }
+
+        // 查找简单检测按钮 (ev 组件, isBlacklisted=false)
         var btn = document.querySelector('[data-ac="check-pass"]');
         if (!btn || !btn.offsetParent) {
           // 备选: 找包含"通过检测"文字的按钮
@@ -660,11 +757,11 @@
             }
           }
         }
-        if (!btn || !btn.offsetParent) return;
+        if (!btn || !btn.offsetParent) return; // 弹窗未出现
         if (btn === _lastTarget) return;
         _lastTarget = btn;
 
-        // 先执行 bypass（绕过 isTrusted / instanceof 检查）
+        // 核心 bypass: 调 _submitEarnestCheck (不是 _doReportVideoPoint 陷阱!)
         EWTH.core.doCheckPass(btn);
         EWTH.logger.info('CHECKPASS', 'done');
         setTimeout(function () { _lastTarget = null; }, COOLDOWN);
@@ -989,7 +1086,7 @@
   })();
 
   // ============================================================
-  // 12. EWTH.antidetection — 反检测对抗 (v4.2.0 更新)
+  // 12. EWTH.antidetection — 反检测对抗 (v4.3.0)
   // ============================================================
   EWTH.antidetection = (function () {
     var _observer = null;
@@ -1073,7 +1170,7 @@
         }
 
         _cleanSpeedTips();
-        EWTH.logger.info('ANTIDETECT', 'init (v4.2.0)');
+        EWTH.logger.info('ANTIDETECT', 'init (v4.3.0)');
       }
     };
   })();
@@ -1111,7 +1208,7 @@
     var _open = false;
     var _panel = null;
     var _overlay = null;
-    var VERSION = '4.2.0';
+    var VERSION = '4.3.0';
 
     var CSS = [
       '.ewt4-ct{position:fixed;bottom:20px;right:20px;z-index:99999;font-family:Arial,sans-serif}',
@@ -1248,7 +1345,7 @@
   })();
 
   // ============================================================
-  // 15. BOOTSTRAP — 初始化 & SPA 导航 (v4.2.0)
+  // 15. BOOTSTRAP — 初始化 & SPA 导航 (v4.3.0)
   // ============================================================
   var _bootRetry = 0;
   var MAX_RETRY = 10;
@@ -1292,7 +1389,7 @@
 
     _booted = true;
     _bootRetry = 0;
-    EWTH.logger.info('BOOT', 'v4.2.0 ready');
+    EWTH.logger.info('BOOT', 'v4.3.0 ready');
   }
 
   // ========= 早期拦截: 在 DOM 就绪前就设置 API 拦截 =========
@@ -1307,15 +1404,17 @@
   }
   window.addEventListener('load', _boot);
 
-  // ========= SPA 导航重连 + video 热加固 =========
+  // ========= SPA 导航重连 + video 热加固 + earnest check 紧急修补 =========
   if (typeof MutationObserver !== 'undefined') {
     function _initMutedObserver() {
       if (!document.documentElement) { setTimeout(_initMutedObserver, 100); return; }
-      new MutationObserver(function () {
+      new MutationObserver(function (mutations) {
+        // SPA 重连: GUI 面板丢失时重建
         if (document.body && !document.querySelector('.ewt4-ct')) {
           _booted = false;
           _boot();
         }
+        // video 热加固
         var videos = document.querySelectorAll('video');
         for (var i = 0; i < videos.length; i++) {
           if (!videos[i]._ewt_hardened && EWTH.store.get('speedControl')) {
@@ -1326,6 +1425,51 @@
         // SPA 页面切换时修补黑名单状态
         if (document.body && EWTH.store.get('autoCheckPass')) {
           EWTH.core.patchBlacklistState(document.body);
+        }
+
+        // earnest check 弹窗紧急修补 (v4.3.0 新增)
+        // 检测 ev/ek 组件 DOM 出现, 立即修补 Context 并执行 bypass
+        if (EWTH.store.get('autoCheckPass')) {
+          for (var mi = 0; mi < mutations.length; mi++) {
+            var added = mutations[mi].addedNodes;
+            for (var mj = 0; mj < added.length; mj++) {
+              if (added[mj].nodeType !== 1) continue;
+              var el = added[mj];
+              var found = false;
+              // 检查 earnest check DOM
+              if (el.className && typeof el.className === 'string') {
+                if (el.className.indexOf('video_earnest_check_box') !== -1 ||
+                    el.className.indexOf('spc_video_earnest_check_box') !== -1) {
+                  found = true;
+                }
+              }
+              if (!found && el.querySelector) {
+                if (el.querySelector('[data-ac="check-pass"]') ||
+                    el.querySelector('#captcha')) {
+                  found = true;
+                }
+              }
+              if (found) {
+                EWTH.logger.info('BOOT', 'earnest check popup detected, patching');
+                EWTH.core.patchBlacklistState(document.body);
+                // 延迟让组件完全挂载后再 bypass
+                setTimeout(function () {
+                  // 优先尝试简单检测按钮 (ev组件)
+                  var btn = document.querySelector('[data-ac="check-pass"]');
+                  if (btn && btn.offsetParent) {
+                    EWTH.core.doCheckPass(btn);
+                  } else {
+                    // 可能是CAPTCHA模式 (ek组件) — doCheckPass内部有#captcha fallback
+                    var cap = document.querySelector('#captcha');
+                    if (cap && cap.offsetParent) {
+                      EWTH.core.doCheckPass(cap);
+                    }
+                  }
+                }, 50);
+                break; // 一次突变只处理一次
+              }
+            }
+          }
         }
       }).observe(document.documentElement, { childList: true, subtree: true });
     }
