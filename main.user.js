@@ -1462,18 +1462,26 @@
       /* === 容器 === */
       '.ewt4-ct{position:fixed;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text",system-ui,sans-serif;touch-action:none;pointer-events:auto}',
 
-      /* === 按钮 — 基础样式 (无条件生效) === */
+      /* === 按钮 — 默认样式 (所有设备) === */
       '.ewt4-btn{',
         'width:54px;height:54px;border-radius:50%;',
-        'background:linear-gradient(135deg,#4A90D9 0%,#357ABD 50%,#2E6B9E 100%);',
-        'border:2px solid rgba(255,255,255,.3);',
-        'box-shadow:0 4px 15px rgba(74,144,217,.4);',
-        'color:#fff;cursor:grab;',
+        '-webkit-backdrop-filter:blur(20px) saturate(200%);',
+        'backdrop-filter:blur(20px) saturate(200%);',
+        'background:linear-gradient(170deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.25) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.08) 40%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.15) 100%);',
+        'border:1.5px solid rgba(var(--lg-r),var(--lg-g),var(--lg-b),.45);',
+        'box-shadow:',
+          '0 2px 12px rgba(0,0,0,.04),',
+          '0 0 0 1px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.15),',
+          'inset 0 1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.6),',
+          'inset 0 -1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.1);',
+        'color:#1a1a1a;cursor:grab;',
         'display:flex;align-items:center;justify-content:center;',
         'font-size:24px;',
         'transition:all .3s cubic-bezier(.32,.72,0,1);',
         'position:relative;overflow:hidden;',
-        'visibility:visible;opacity:1;',
+        'visibility:visible !important;',
+        'opacity:1 !important;',
+        'z-index:2147483647 !important;',
       '}',
       '.ewt4-btn::before{',
         'content:"";position:absolute;inset:0;border-radius:50%;',
@@ -1484,59 +1492,47 @@
         'background:radial-gradient(ellipse,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.4) 0%,transparent 70%);',
         'border-radius:50%;transform:rotate(-25deg);pointer-events:none;',
       '}',
-      /* === 按钮悬停 (桌面端液态玻璃) === */
-      '@media(min-width:769px){',
-        '.ewt4-btn{',
-          'background:linear-gradient(170deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.25) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.08) 40%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.15) 100%);',
-          '-webkit-backdrop-filter:blur(20px) saturate(200%);',
-          'backdrop-filter:blur(20px) saturate(200%);',
-          'border:1.5px solid rgba(var(--lg-r),var(--lg-g),var(--lg-b),.45);',
-          'box-shadow:',
-            '0 2px 12px rgba(0,0,0,.04),',
-            '0 0 0 1px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.15),',
-            'inset 0 1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.6),',
-            'inset 0 -1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.1);',
-          'color:#1a1a1a;',
-        '}',
-        '.ewt4-btn:hover{',
-          'background:linear-gradient(170deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.35) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.12) 40%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.2) 100%);',
-          'border-color:rgba(var(--lg-r),var(--lg-g),var(--lg-b),.6);',
-          'box-shadow:',
-            '0 4px 20px rgba(0,0,0,.06),',
-            '0 0 0 1px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.25),',
-            '0 0 15px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.1),',
-            'inset 0 1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.7),',
-            'inset 0 -1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.15);',
-        '}',
+      '.ewt4-btn::before{',
+        'content:"";position:absolute;inset:0;border-radius:50%;',
+        'background:linear-gradient(155deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.3) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.03) 40%,transparent 65%);pointer-events:none;',
+      '}',
+      '.ewt4-btn::after{',
+        'content:"";position:absolute;top:5px;left:10px;width:16px;height:9px;',
+        'background:radial-gradient(ellipse,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.4) 0%,transparent 70%);',
+        'border-radius:50%;transform:rotate(-25deg);pointer-events:none;',
+      '}',
+      '.ewt4-btn:hover{',
+        'background:linear-gradient(170deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.35) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.12) 40%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.2) 100%);',
+        'border-color:rgba(var(--lg-r),var(--lg-g),var(--lg-b),.6);',
+        'box-shadow:',
+          '0 4px 20px rgba(0,0,0,.06),',
+          '0 0 0 1px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.25),',
+          '0 0 15px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.1),',
+          'inset 0 1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.7),',
+          'inset 0 -1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.15);',
       '}',
       '.ewt4-btn:active{cursor:grabbing;transform:scale(.95);transition-duration:.1s}',
       '.ewt4-btn.ewt4-dragging{cursor:grabbing;transform:scale(1.05);transition:none}',
 
-      /* === 面板 — 基础样式 === */
+      /* === 面板 — 液态玻璃质感 (所有设备) === */
       '.ewt4-pnl{',
         'position:absolute;bottom:64px;right:0;width:320px;',
-        'background:rgba(255,255,255,.98);',
-        'border:1px solid rgba(0,0,0,.08);',
+        '-webkit-backdrop-filter:blur(24px) saturate(200%);',
+        'backdrop-filter:blur(24px) saturate(200%);',
+        'background:linear-gradient(170deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.22) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.06) 35%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.12) 65%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.18) 100%);',
+        'border:1.5px solid rgba(var(--lg-r),var(--lg-g),var(--lg-b),.4);',
         'border-radius:22px;',
-        'box-shadow:0 8px 32px rgba(0,0,0,.12);',
+        'box-shadow:',
+          '0 12px 40px rgba(0,0,0,.04),',
+          '0 0 0 1px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.12),',
+          'inset 0 1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.5),',
+          'inset 0 -1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.08);',
         'padding:22px 20px;',
         'display:none;flex-direction:column;gap:6px;',
         'max-height:80vh;overflow-y:auto;',
         'transform-origin:bottom right;',
-      '}',
-      /* === 面板 — 桌面端液态玻璃增强 === */
-      '@media(min-width:769px){',
-        '.ewt4-pnl{',
-          '-webkit-backdrop-filter:blur(24px) saturate(200%);',
-          'backdrop-filter:blur(24px) saturate(200%);',
-          'background:linear-gradient(170deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.22) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.06) 35%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.12) 65%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.18) 100%);',
-          'border:1.5px solid rgba(var(--lg-r),var(--lg-g),var(--lg-b),.4);',
-          'box-shadow:',
-            '0 12px 40px rgba(0,0,0,.04),',
-            '0 0 0 1px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.12),',
-            'inset 0 1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.5),',
-            'inset 0 -1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.08);',
-        '}',
+        'visibility:visible !important;',
+        'z-index:2147483647 !important;',
       '}',
       '.ewt4-pnl::before{',
         'content:"";position:absolute;inset:0;border-radius:22px;',
@@ -1672,35 +1668,6 @@
         '.ewt4-pnl{background:rgba(255,255,255,.9)}',
         '.ewt4-ovt{background:rgba(255,255,255,.92)}',
       '}',
-
-      /* === 移动端兼容 === */
-      '@media(max-width:768px){',
-        '.ewt4-ct{',
-          'z-index:2147483647 !important;',
-        '}',
-        '.ewt4-btn{',
-          'width:56px;height:56px;',
-          'background:linear-gradient(135deg,#4A90D9 0%,#357ABD 50%,#2E6B9E 100%) !important;',
-          '-webkit-backdrop-filter:none !important;',
-          'backdrop-filter:none !important;',
-          'box-shadow:0 4px 15px rgba(74,144,217,.4) !important;',
-          'border:2px solid rgba(255,255,255,.3) !important;',
-          'color:#fff !important;',
-          'font-size:26px !important;',
-          'display:flex !important;',
-          'visibility:visible !important;',
-          'opacity:1 !important;',
-        '}',
-        '.ewt4-btn::before,.ewt4-btn::after{display:none !important}',
-        '.ewt4-pnl{',
-          'width:280px !important;',
-          'background:rgba(255,255,255,.98) !important;',
-          '-webkit-backdrop-filter:none !important;',
-          'backdrop-filter:none !important;',
-          'box-shadow:0 4px 30px rgba(0,0,0,.15) !important;',
-          'border:1px solid rgba(0,0,0,.08) !important;',
-        '}',
-      '}',
     ].join('\n');
 
     function _injectCSS() {
@@ -1822,6 +1789,7 @@
 
     return {
       init: function () {
+        EWTH.logger.info('GUI', 'init called');
         _injectCSS();
         var ct = document.createElement('div'); ct.className = 'ewt4-ct';
 
@@ -1857,7 +1825,18 @@
         _panel.appendChild(_makeColorPicker());
         _panel.appendChild(_makeToggle('brushMode', '刷课模式（一键全开）', true));
         ct.appendChild(_panel);
-        document.body.appendChild(ct);
+
+        // 等待 body 可用再添加
+        function _appendToBody() {
+          if (document.body) {
+            document.body.appendChild(ct);
+            EWTH.logger.info('GUI', 'button appended to body');
+          } else {
+            EWTH.logger.debug('GUI', 'body not ready, waiting...');
+            setTimeout(_appendToBody, 100);
+          }
+        }
+        _appendToBody();
 
         // —— 拖拽逻辑 ——
         var _dragging = false;
@@ -1975,7 +1954,9 @@
 
   function _boot() {
     if (_booted) return;
+    EWTH.logger.info('BOOT', 'attempt ' + (_bootRetry + 1));
     if (!document.body) {
+      EWTH.logger.debug('BOOT', 'body not ready, retry ' + (_bootRetry + 1));
       if (_bootRetry++ < MAX_RETRY) setTimeout(_boot, 300);
       return;
     }
