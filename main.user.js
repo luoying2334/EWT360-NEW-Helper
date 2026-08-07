@@ -1791,6 +1791,24 @@
       init: function () {
         EWTH.logger.info('GUI', 'init called');
         _injectCSS();
+
+        // 检测 backdrop-filter 是否真正可用 (Edge 仿真模式可能声明支持但不渲染)
+        var _testEl = document.createElement('div');
+        _testEl.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;-webkit-backdrop-filter:blur(1px);backdrop-filter:blur(1px)';
+        document.documentElement.appendChild(_testEl);
+        var _computedBdf = getComputedStyle(_testEl).backdropFilter || getComputedStyle(_testEl).webkitBackdropFilter || '';
+        document.documentElement.removeChild(_testEl);
+        var _glassSupported = _computedBdf.indexOf('blur') !== -1;
+        EWTH.logger.info('GUI', 'backdrop-filter: ' + (_glassSupported ? 'supported' : 'NOT supported, using fallback'));
+
+        if (!_glassSupported) {
+          // 注入降级样式
+          var fallbackCSS = document.createElement('style');
+          fallbackCSS.textContent = '.ewt4-btn{background:rgba(255,255,255,.92)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:0 4px 20px rgba(0,0,0,.12)!important;border:1px solid rgba(0,0,0,.1)!important}' +
+            '.ewt4-pnl{background:rgba(255,255,255,.98)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:0 8px 32px rgba(0,0,0,.12)!important;border:1px solid rgba(0,0,0,.08)!important}';
+          document.documentElement.appendChild(fallbackCSS);
+        }
+
         var ct = document.createElement('div'); ct.className = 'ewt4-ct';
 
         // —— 恢复上次保存的位置 ——
