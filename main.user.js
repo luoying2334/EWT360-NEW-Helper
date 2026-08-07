@@ -1654,6 +1654,25 @@
         '.ewt4-pnl{background:rgba(255,255,255,.9)}',
         '.ewt4-ovt{background:rgba(255,255,255,.92)}',
       '}',
+
+      /* === 移动端兼容 === */
+      '@media(max-width:768px){',
+        '.ewt4-btn{',
+          'width:50px;height:50px;',
+          'background:rgba(255,255,255,.9) !important;',
+          '-webkit-backdrop-filter:none !important;',
+          'backdrop-filter:none !important;',
+          'box-shadow:0 2px 12px rgba(0,0,0,.15) !important;',
+          'border:1px solid rgba(0,0,0,.1) !important;',
+        '}',
+        '.ewt4-pnl{',
+          'width:280px !important;',
+          'background:rgba(255,255,255,.95) !important;',
+          '-webkit-backdrop-filter:none !important;',
+          'backdrop-filter:none !important;',
+          'box-shadow:0 4px 20px rgba(0,0,0,.12) !important;',
+        '}',
+      '}',
     ].join('\n');
 
     function _injectCSS() {
