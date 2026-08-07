@@ -1979,42 +1979,54 @@
       return;
     }
 
-    // 步骤0: 初始化存储
-    EWTH.store.init();
+    try {
+      // 步骤0: 初始化存储
+      EWTH.logger.debug('BOOT', 'step 0: store.init');
+      EWTH.store.init();
 
-    // 步骤1: API 拦截（必须最先，阻止 addStudp / getVideodp 请求到达服务器）
-    EWTH.apiIntercept.init();
+      // 步骤1: API 拦截
+      EWTH.logger.debug('BOOT', 'step 1: apiIntercept.init');
+      EWTH.apiIntercept.init();
 
-    // 步骤2: 反检测对抗
-    EWTH.antidetection.init();
+      // 步骤2: 反检测对抗
+      EWTH.logger.debug('BOOT', 'step 2: antidetection.init');
+      EWTH.antidetection.init();
 
-    // 步骤3: 液态玻璃系统初始化
-    EWTH.liquidglass.init();
+      // 步骤3: 液态玻璃系统初始化
+      EWTH.logger.debug('BOOT', 'step 3: liquidglass.init');
+      EWTH.liquidglass.init();
 
-    // 步骤4: GUI 面板
-    EWTH.gui.init();
+      // 步骤4: GUI 面板
+      EWTH.logger.debug('BOOT', 'step 4: gui.init');
+      EWTH.gui.init();
 
-    // 步骤4: 任务页自动跳下一天
-    EWTH.nextday.run();
+      // 步骤5: 任务页自动跳下一天
+      EWTH.logger.debug('BOOT', 'step 5: nextday.run');
+      EWTH.nextday.run();
 
-    // 步骤5: 设置日志级别
-    EWTH.logger.setLevel(EWTH.config.DEBUG ? 4 : 0);
+      // 步骤6: 设置日志级别
+      EWTH.logger.setLevel(EWTH.config.DEBUG ? 4 : 0);
 
-    // 步骤6: 恢复上次保存的功能状态
-    if (EWTH.store.get('brushMode')) {
-      EWTH.brushmode.toggle(true);
-    } else {
-      if (EWTH.store.get('autoSkip'))      EWTH.autoskip.toggle(true);
-      if (EWTH.store.get('autoPlay'))      EWTH.autoplay.toggle(true);
-      if (EWTH.store.get('autoCheckPass')) EWTH.checkpass.toggle(true);
-      if (EWTH.store.get('speedControl'))  EWTH.speed.toggle(true);
-      if (EWTH.store.get('lockProgress'))  EWTH.progresslock.toggle(true);
-      if (EWTH.store.get('muteAudio'))     EWTH.mute.toggle(true);
+      // 步骤7: 恢复上次保存的功能状态
+      EWTH.logger.debug('BOOT', 'step 7: restore state');
+      if (EWTH.store.get('brushMode')) {
+        EWTH.brushmode.toggle(true);
+      } else {
+        if (EWTH.store.get('autoSkip'))      EWTH.autoskip.toggle(true);
+        if (EWTH.store.get('autoPlay'))      EWTH.autoplay.toggle(true);
+        if (EWTH.store.get('autoCheckPass')) EWTH.checkpass.toggle(true);
+        if (EWTH.store.get('speedControl'))  EWTH.speed.toggle(true);
+        if (EWTH.store.get('lockProgress'))  EWTH.progresslock.toggle(true);
+        if (EWTH.store.get('muteAudio'))     EWTH.mute.toggle(true);
+      }
+
+      _booted = true;
+      _bootRetry = 0;
+      EWTH.logger.info('BOOT', 'v4.4.0 ready');
+    } catch (e) {
+      EWTH.logger.error('BOOT', 'failed at step: ' + e.message);
+      console.error('[EWT Helper] BOOT error:', e);
     }
-
-    _booted = true;
-    _bootRetry = 0;
-    EWTH.logger.info('BOOT', 'v4.4.0 ready');
   }
 
   // ========= 早期拦截: 在 DOM 就绪前就设置 API 拦截 =========
