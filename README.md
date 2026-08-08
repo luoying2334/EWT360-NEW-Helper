@@ -1,6 +1,6 @@
 # EWT360-NEW-Helper
 
->本项目现已经完全重构，由 [luoying2334](https://github.com/luoying2334) 独立维护。
+>本项目现已经完全重构
 
 ![ima](/image/ewt_image.png)
 

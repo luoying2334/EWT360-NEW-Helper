@@ -8,6 +8,7 @@
 // @match        http://web.ewt360.com/site-study/*
 // @namespace    https://github.com/luoying2334/EWT360-NEW-Helper
 // @author       luoying2334
+// @author       Le1-Chu
 // @icon         https://www.ewt360.com/favicon.ico
 // @grant        none
 // @run-at       document-start
