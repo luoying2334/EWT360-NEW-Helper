@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         升学E网通助手 v4.3.0
-// @version      4.3.0
-// @description  适配2026.7.30平台更新：_submitEarnestCheck绕过 + addVideoss拦截 + Context修补 + em标记防护
+// @name         升学E网通助手 v4.4.0
+// @version      4.4.0
+// @description  新增：液态玻璃UI + 自动静音 + UI色调自定义 | 适配2026.7.30平台更新
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        https://web.ewt360.com/site-study/*
@@ -127,8 +127,10 @@
       autoCheckPass:  false,
       speedControl:   false,
       lockProgress:   false,
+      muteAudio:      false,
       brushMode:      false,
-      hasShownGuide:  false
+      hasShownGuide:  false,
+      glassColor:     'white'
     };
 
     function _save() {
@@ -168,7 +170,7 @@
   })();
 
   // ============================================================
-  // 4. EWTH.apiIntercept — API 拦截 (v4.3.0 更新)
+  // 4. EWTH.apiIntercept — API 拦截 (v4.4.0 更新)
   // ============================================================
   EWTH.apiIntercept = (function () {
     var _intercepted = false;
@@ -310,7 +312,7 @@
   })();
 
   // ============================================================
-  // 5. EWTH.core — Fiber 工具 + 认真度检测绕过 (v4.3.0 重写)
+  // 5. EWTH.core — Fiber 工具 + 认真度检测绕过 (v4.4.0 重写)
   // ============================================================
   EWTH.core = (function () {
 
@@ -353,7 +355,7 @@
       return null;
     }
 
-    // ========= 认真度检测 bypass (v4.3.0 重写) =========
+    // ========= 认真度检测 bypass (v4.4.0 重写) =========
     // 平台 2026.7.30 ev 组件 (homework-play-video):
     //   reportVideoPoint → GUARD (constructor: if(!em){em=!0;updateIsBlacklisted(...)} return !1)
     //   _doReportVideoPoint → TRAP (Modal.warning + updateIsBlacklisted)
@@ -469,7 +471,7 @@
       }
     }
 
-    // ========= 上下文黑名单状态修补 (v4.3.0 增强) =========
+    // ========= 上下文黑名单状态修补 (v4.4.0 增强) =========
     // 平台 Context Provider O (homework-play-video):
     //   let [isBlacklisted, setIsBlacklisted] = useState(false)
     //   let getVideodp = async() => {
@@ -599,7 +601,7 @@
   })();
 
   // ============================================================
-  // 6. EWTH.autoskip — 自动跳题 (v4.3.0)
+  // 6. EWTH.autoskip — 自动跳题 (v4.4.0)
   // ============================================================
   EWTH.autoskip = (function () {
     var _interval = null;
@@ -648,7 +650,7 @@
   })();
 
   // ============================================================
-  // 7. EWTH.checkpass — 自动过检 (v4.3.0 重写，CAPTCHA 直接绕过)
+  // 7. EWTH.checkpass — 自动过检 (v4.4.0 重写，CAPTCHA 直接绕过)
   // ============================================================
   EWTH.checkpass = (function () {
     var _interval = null;
@@ -1051,7 +1053,112 @@
   })();
 
   // ============================================================
-  // 11. EWTH.progresslock — 锁定进度条
+  // 12. EWTH.mute — 自动静音 (v4.4.0)
+  // ============================================================
+  EWTH.mute = (function () {
+    var _active = false;
+    var _interval = null;
+
+    function _getVideo() {
+      return document.querySelector('video');
+    }
+
+    function _apply(v) {
+      if (!v) v = _getVideo();
+      if (!v) return;
+      try {
+        if (!v.muted) v.muted = true;
+        if (v.volume !== 0) v.volume = 0;
+      } catch (e) { /* ignore */ }
+    }
+
+    function _hardenVideo(v) {
+      if (!v || v._ewt_mute_hardened) return;
+      v._ewt_mute_hardened = true;
+      try {
+        var mutedDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
+        var volDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume');
+        if (mutedDesc && mutedDesc.get && mutedDesc.set) {
+          Object.defineProperty(v, 'muted', {
+            get: function () { return mutedDesc.get.call(this); },
+            set: function (val) { mutedDesc.set.call(this, val); },
+            configurable: false,
+            enumerable: true
+          });
+        }
+        if (volDesc && volDesc.get && volDesc.set) {
+          Object.defineProperty(v, 'volume', {
+            get: function () { return volDesc.get.call(this); },
+            set: function (val) { volDesc.set.call(this, val); },
+            configurable: false,
+            enumerable: true
+          });
+        }
+        EWTH.logger.debug('MUTE', 'hardened video');
+      } catch (e) {
+        EWTH.logger.debug('MUTE', 'harden failed: ' + e.message);
+      }
+    }
+
+    function _onVolumeChange(e) {
+      if (!_active) return;
+      var v = e.target;
+      if (v && v.tagName === 'VIDEO' && (!v.muted || v.volume !== 0)) {
+        setTimeout(function () {
+          try {
+            if (!v.muted) v.muted = true;
+            if (v.volume !== 0) v.volume = 0;
+          } catch (err) { /* ignore */ }
+        }, 0);
+      }
+    }
+
+    return {
+      toggle: function (on) {
+        _active = on;
+        var v = _getVideo();
+        if (on) {
+          _apply(v);
+          if (v) _hardenVideo(v);
+          this.start();
+        } else {
+          this.stop();
+        }
+      },
+
+      start: function () {
+        document.addEventListener('volumechange', _onVolumeChange, true);
+        if (!_interval) {
+          _interval = setInterval(function () {
+            var v = _getVideo();
+            if (v && !v._ewt_mute_hardened) _hardenVideo(v);
+            if (_active) _apply(v);
+          }, EWTH.config.INTERVAL.SPEED_REAPPLY);
+        }
+        EWTH.logger.info('MUTE', 'started');
+      },
+
+      stop: function () {
+        document.removeEventListener('volumechange', _onVolumeChange, true);
+        if (_interval) { clearInterval(_interval); _interval = null; }
+        // 恢复视频声音
+        var v = _getVideo();
+        if (v) {
+          try {
+            v.muted = false;
+            if (v.volume === 0) v.volume = 0.5;
+          } catch (e) { /* ignore */ }
+        }
+        EWTH.logger.info('MUTE', 'stopped, audio restored');
+      },
+
+      _apply: _apply,
+      _hardenVideo: _hardenVideo
+    };
+  })();
+
+  // ============================================================
+  // 13. EWTH.progresslock — 锁定进度条
   // ============================================================
   EWTH.progresslock = (function () {
     var _styleEl = null;
@@ -1086,7 +1193,7 @@
   })();
 
   // ============================================================
-  // 12. EWTH.antidetection — 反检测对抗 (v4.3.0)
+  // 14. EWTH.antidetection — 反检测对抗 (v4.4.0)
   // ============================================================
   EWTH.antidetection = (function () {
     var _observer = null;
@@ -1170,22 +1277,23 @@
         }
 
         _cleanSpeedTips();
-        EWTH.logger.info('ANTIDETECT', 'init (v4.3.0)');
+        EWTH.logger.info('ANTIDETECT', 'init (v4.4.0)');
       }
     };
   })();
 
   // ============================================================
-  // 13. EWTH.brushmode — 一键刷课
+  // 15. EWTH.brushmode — 一键刷课
   // ============================================================
   EWTH.brushmode = (function () {
-    var KEYS = ['autoSkip', 'autoPlay', 'autoCheckPass', 'speedControl', 'lockProgress'];
+    var KEYS = ['autoSkip', 'autoPlay', 'autoCheckPass', 'speedControl', 'lockProgress', 'muteAudio'];
     var MODS = {
       autoSkip:      EWTH.autoskip,
       autoPlay:      EWTH.autoplay,
       autoCheckPass: EWTH.checkpass,
       speedControl:  EWTH.speed,
-      lockProgress:  EWTH.progresslock
+      lockProgress:  EWTH.progresslock,
+      muteAudio:     EWTH.mute
     };
 
     return {
@@ -1202,35 +1310,364 @@
   })();
 
   // ============================================================
-  // 14. EWTH.gui — 浮动控制面板
+  // 16. EWTH.liquidglass — 液态玻璃效果系统
+  // ============================================================
+  EWTH.liquidglass = (function () {
+    // —— 默认参数 ——
+    var DEFAULTS = {
+      blur: { radius: 16, saturation: 180 },
+      highlight: { angle: 155, intensity: 0.5 },
+      border: { width: 1, opacity: 0.45 },
+      shadow: { blur: 40, opacity: 0.05 },
+      transition: { duration: 350, easing: 'cubic-bezier(.32,.72,0,1)' }
+    };
+
+    // —— 颜色预设 ——
+    var PRESETS = {
+      white:  { r: 255, g: 255, b: 255, label: '经典白', emoji: '⚪' },
+      blue:   { r: 140, g: 200, b: 255, label: '冰蓝',   emoji: '🔵' },
+      purple: { r: 230, g: 200, b: 255, label: '梦幻紫', emoji: '🟣' },
+      green:  { r: 200, g: 255, b: 230, label: '薄荷绿', emoji: '🟢' },
+      rose:   { r: 255, g: 220, b: 220, label: '玫瑰金', emoji: '🩷' }
+    };
+
+    function applyColorPreset(name) {
+      var preset = PRESETS[name] || PRESETS.white;
+      var root = document.documentElement;
+      root.style.setProperty('--lg-r', preset.r);
+      root.style.setProperty('--lg-g', preset.g);
+      root.style.setProperty('--lg-b', preset.b);
+      EWTH.store.set('glassColor', name);
+      EWTH.logger.info('LIQUIDGLASS', 'color: ' + name);
+    }
+
+    // —— 性能检测 ——
+    var _supportsBackdrop = null;
+    function supportsBackdropFilter() {
+      if (_supportsBackdrop !== null) return _supportsBackdrop;
+      _supportsBackdrop = CSS.supports('backdrop-filter', 'blur(1px)') ||
+                          CSS.supports('-webkit-backdrop-filter', 'blur(1px)');
+      return _supportsBackdrop;
+    }
+
+    // —— 低性能设备检测 ——
+    var _isLowPerf = null;
+    function isLowPerformance() {
+      if (_isLowPerf !== null) return _isLowPerf;
+      var dm = window.matchMedia('(prefers-reduced-motion: reduce)');
+      _isLowPerf = dm.matches || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
+      return _isLowPerf;
+    }
+
+    // —— 生成 CSS 字符串 ——
+    function generateCSS(params) {
+      var p = params || {};
+      var blur = p.blur || DEFAULTS.blur;
+      var highlight = p.highlight || DEFAULTS.highlight;
+      var border = p.border || DEFAULTS.border;
+      var shadow = p.shadow || DEFAULTS.shadow;
+      var transition = p.transition || DEFAULTS.transition;
+
+      var radius = isLowPerformance() ? Math.min(blur.radius, 8) : blur.radius;
+      var sat = isLowPerformance() ? 100 : blur.saturation;
+
+      var css = {};
+
+      // 核心模糊
+      if (supportsBackdropFilter()) {
+        css.backdropFilter = 'blur(' + radius + 'px) saturate(' + sat + '%)';
+        css.webkitBackdropFilter = 'blur(' + radius + 'px) saturate(' + sat + '%)';
+      } else {
+        // 降级: 纯色背景
+        css.background = 'rgba(255,255,255,.88)';
+      }
+
+      return css;
+    }
+
+    // —— 动态光影追踪 ——
+    function attachHighlightTracking(el) {
+      if (!el) return;
+      el.addEventListener('mousemove', function (e) {
+        var rect = el.getBoundingClientRect();
+        var x = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
+        var y = ((e.clientY - rect.top) / rect.height * 100).toFixed(1);
+        el.style.setProperty('--lg-x', x + '%');
+        el.style.setProperty('--lg-y', y + '%');
+      });
+      el.addEventListener('mouseleave', function () {
+        el.style.setProperty('--lg-x', '50%');
+        el.style.setProperty('--lg-y', '50%');
+      });
+    }
+
+    // —— 点击波纹效果 ——
+    function attachRipple(el) {
+      if (!el) return;
+      el.style.position = 'relative';
+      el.style.overflow = 'hidden';
+      el.addEventListener('click', function (e) {
+        var rect = el.getBoundingClientRect();
+        var x = e.clientX - rect.left;
+        var y = e.clientY - rect.top;
+        var ripple = document.createElement('span');
+        ripple.style.cssText = 'position:absolute;border-radius:50%;background:rgba(255,255,255,.4);' +
+          'transform:scale(0);animation:lg-ripple .6s ease-out;pointer-events:none;' +
+          'left:' + (x - 20) + 'px;top:' + (y - 20) + 'px;width:40px;height:40px;';
+        el.appendChild(ripple);
+        setTimeout(function () { ripple.remove(); }, 600);
+      });
+    }
+
+    // —— 初始化动画 ——
+    function _injectAnimCSS() {
+      if (document.getElementById('lg-anim-css')) return;
+      var s = document.createElement('style');
+      s.id = 'lg-anim-css';
+      s.textContent = '@keyframes lg-ripple{to{transform:scale(4);opacity:0}}';
+      document.head.appendChild(s);
+    }
+
+    return {
+      DEFAULTS: DEFAULTS,
+      PRESETS: PRESETS,
+      applyColorPreset: applyColorPreset,
+      supportsBackdropFilter: supportsBackdropFilter,
+      isLowPerformance: isLowPerformance,
+      generateCSS: generateCSS,
+      attachHighlightTracking: attachHighlightTracking,
+      attachRipple: attachRipple,
+      init: function () {
+        _injectAnimCSS();
+        var savedColor = EWTH.store.get('glassColor') || 'white';
+        applyColorPreset(savedColor);
+        EWTH.logger.info('LIQUIDGLASS', 'init (backdrop=' + supportsBackdropFilter() + ', lowPerf=' + isLowPerformance() + ', color=' + savedColor + ')');
+      }
+    };
+  })();
+
+  // ============================================================
+  // 17. EWTH.gui — 浮动控制面板 (液态玻璃版)
   // ============================================================
   EWTH.gui = (function () {
     var _open = false;
     var _panel = null;
     var _overlay = null;
-    var VERSION = '4.3.0';
+    var VERSION = '4.4.0';
 
     var CSS = [
-      '.ewt4-ct{position:fixed;bottom:20px;right:20px;z-index:99999;font-family:Arial,sans-serif}',
-      '.ewt4-btn{width:50px;height:50px;border-radius:50%;background:#2196F3;color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 4px 12px rgba(0,0,0,.25);transition:all .3s}',
-      '.ewt4-btn:hover{background:#1976D2;transform:scale(1.08)}',
-      '.ewt4-pnl{position:absolute;bottom:60px;right:0;width:280px;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:16px;display:none;flex-direction:column;gap:10px;max-height:80vh;overflow-y:auto}',
-      '.ewt4-pnl.open{display:flex}',
-      '.ewt4-ttl{font-size:18px;font-weight:bold;color:#333;text-align:center}',
-      '.ewt4-ver{font-size:11px;color:#999;text-align:center;margin-bottom:4px}',
-      '.ewt4-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f0f0}',
-      '.ewt4-lbl{font-size:14px;color:#555}',
-      '.ewt4-lbl.br{color:#2196F3;font-weight:bold}',
-      '.ewt4-sw{position:relative;display:inline-block;width:40px;height:24px;flex-shrink:0}',
+      /* === CSS 变量 — 液态玻璃颜色 === */
+      ':root{--lg-r:255;--lg-g:255;--lg-b:255}',
+
+      /* === 容器 === */
+      '.ewt4-ct{position:fixed;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text",system-ui,sans-serif;touch-action:none;pointer-events:auto}',
+
+      /* === 按钮 — 默认样式 (所有设备) === */
+      '.ewt4-btn{',
+        'width:54px;height:54px;border-radius:50%;',
+        '-webkit-backdrop-filter:blur(20px) saturate(200%);',
+        'backdrop-filter:blur(20px) saturate(200%);',
+        'background:linear-gradient(170deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.25) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.08) 40%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.15) 100%);',
+        'border:1.5px solid rgba(var(--lg-r),var(--lg-g),var(--lg-b),.45);',
+        'box-shadow:',
+          '0 2px 12px rgba(0,0,0,.04),',
+          '0 0 0 1px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.15),',
+          'inset 0 1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.6),',
+          'inset 0 -1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.1);',
+        'color:#1a1a1a;cursor:grab;',
+        'display:flex;align-items:center;justify-content:center;',
+        'font-size:24px;',
+        'transition:all .3s cubic-bezier(.32,.72,0,1);',
+        'position:relative;overflow:hidden;',
+        'visibility:visible !important;',
+        'opacity:1 !important;',
+        'z-index:2147483647 !important;',
+      '}',
+      '.ewt4-btn::before{',
+        'content:"";position:absolute;inset:0;border-radius:50%;',
+        'background:linear-gradient(155deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.3) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.03) 40%,transparent 65%);pointer-events:none;',
+      '}',
+      '.ewt4-btn::after{',
+        'content:"";position:absolute;top:5px;left:10px;width:16px;height:9px;',
+        'background:radial-gradient(ellipse,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.4) 0%,transparent 70%);',
+        'border-radius:50%;transform:rotate(-25deg);pointer-events:none;',
+      '}',
+      '.ewt4-btn::before{',
+        'content:"";position:absolute;inset:0;border-radius:50%;',
+        'background:linear-gradient(155deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.3) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.03) 40%,transparent 65%);pointer-events:none;',
+      '}',
+      '.ewt4-btn::after{',
+        'content:"";position:absolute;top:5px;left:10px;width:16px;height:9px;',
+        'background:radial-gradient(ellipse,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.4) 0%,transparent 70%);',
+        'border-radius:50%;transform:rotate(-25deg);pointer-events:none;',
+      '}',
+      '.ewt4-btn:hover{',
+        'background:linear-gradient(170deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.35) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.12) 40%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.2) 100%);',
+        'border-color:rgba(var(--lg-r),var(--lg-g),var(--lg-b),.6);',
+        'box-shadow:',
+          '0 4px 20px rgba(0,0,0,.06),',
+          '0 0 0 1px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.25),',
+          '0 0 15px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.1),',
+          'inset 0 1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.7),',
+          'inset 0 -1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.15);',
+      '}',
+      '.ewt4-btn:active{cursor:grabbing;transform:scale(.95);transition-duration:.1s}',
+      '.ewt4-btn.ewt4-dragging{cursor:grabbing;transform:scale(1.05);transition:none}',
+
+      /* === 面板 — 液态玻璃质感 (所有设备) === */
+      '.ewt4-pnl{',
+        'position:absolute;bottom:64px;right:0;width:320px;',
+        '-webkit-backdrop-filter:blur(24px) saturate(200%);',
+        'backdrop-filter:blur(24px) saturate(200%);',
+        'background:linear-gradient(170deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.22) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.06) 35%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.12) 65%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.18) 100%);',
+        'border:1.5px solid rgba(var(--lg-r),var(--lg-g),var(--lg-b),.4);',
+        'border-radius:22px;',
+        'box-shadow:',
+          '0 12px 40px rgba(0,0,0,.04),',
+          '0 0 0 1px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.12),',
+          'inset 0 1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.5),',
+          'inset 0 -1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.08);',
+        'padding:22px 20px;',
+        'display:none;flex-direction:column;gap:6px;',
+        'max-height:80vh;overflow-y:auto;',
+        'transform-origin:bottom right;',
+        'visibility:visible !important;',
+        'z-index:2147483647 !important;',
+      '}',
+      '.ewt4-pnl::before{',
+        'content:"";position:absolute;inset:0;border-radius:22px;',
+        'background:linear-gradient(160deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.18) 0%,transparent 45%);pointer-events:none;',
+      '}',
+      '.ewt4-pnl::after{',
+        'content:"";position:absolute;top:1px;left:20px;right:20px;height:1px;',
+        'background:linear-gradient(90deg,transparent,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.4) 25%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.6) 50%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.4) 75%,transparent);',
+        'pointer-events:none;',
+      '}',
+      '.ewt4-pnl.open{',
+        'display:flex;',
+        'animation:ewt4-glass-in .35s cubic-bezier(.32,.72,0,1) forwards;',
+      '}',
+      '@keyframes ewt4-glass-in{',
+        '0%{opacity:0;transform:scale(.92) translateY(12px)}',
+        '100%{opacity:1;transform:scale(1) translateY(0)}',
+      '}',
+
+      /* === 文字 — 固定黑色 === */
+      '.ewt4-ttl{font-size:18px;font-weight:600;color:#1a1a1a;text-align:center;letter-spacing:.3px;position:relative;z-index:1}',
+      '.ewt4-ver{font-size:12px;color:rgba(0,0,0,.35);text-align:center;margin-bottom:8px;letter-spacing:.5px;position:relative;z-index:1}',
+
+      /* === 行项目 === */
+      '.ewt4-row{display:flex;align-items:center;justify-content:space-between;padding:12px 10px;border-bottom:1px solid rgba(0,0,0,.06);transition:background .2s;border-radius:10px;position:relative;z-index:1}',
+      '.ewt4-row:last-child{border-bottom:none}',
+      '.ewt4-row:hover{background:rgba(0,0,0,.03)}',
+
+      /* === 标签 === */
+      '.ewt4-lbl{font-size:15px;font-weight:500;color:#1a1a1a}',
+      '.ewt4-lbl.br{background:linear-gradient(135deg,#1565C0,#1976D2,#2196F3);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:600}',
+
+      /* === Toggle === */
+      '.ewt4-sw{position:relative;display:inline-block;width:44px;height:26px;flex-shrink:0}',
       '.ewt4-sw input{opacity:0;width:0;height:0}',
-      '.ewt4-sl{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#ccc;transition:.4s;border-radius:24px}',
-      '.ewt4-sl:before{position:absolute;content:"";height:16px;width:16px;left:4px;bottom:4px;background:#fff;transition:.4s;border-radius:50%}',
-      '.ewt4-sw input:checked+.ewt4-sl{background:#2196F3}',
-      '.ewt4-sw input:checked+.ewt4-sl:before{transform:translateX(16px)}',
-      '.ewt4-ov{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.75);z-index:99998;display:flex;flex-direction:column;justify-content:center;align-items:center}',
-      '.ewt4-ovt{color:#fff;font-size:22px;font-weight:bold;margin-bottom:20px;text-align:center;line-height:1.6}',
-      '.ewt4-arr{position:fixed;bottom:80px;right:80px;color:#fff;font-size:56px;animation:ewt4-b 1.5s infinite;transform:rotate(45deg)}',
+      '.ewt4-sl{',
+        'position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;',
+        'background:rgba(0,0,0,.08);',
+        'border:1px solid rgba(0,0,0,.06);',
+        'transition:all .35s cubic-bezier(.32,.72,0,1);',
+        'border-radius:26px;',
+        'box-shadow:inset 0 1px 2px rgba(0,0,0,.06);',
+      '}',
+      '.ewt4-sl:before{',
+        'position:absolute;content:"";height:20px;width:20px;left:2px;bottom:2px;',
+        'background:#fff;',
+        'transition:all .35s cubic-bezier(.32,.72,0,1);border-radius:50%;',
+        'box-shadow:0 1px 3px rgba(0,0,0,.12);',
+      '}',
+      '.ewt4-sw input:checked+.ewt4-sl{',
+        'background:linear-gradient(135deg,#1976D2,#2196F3);',
+        'border-color:rgba(33,150,243,.4);',
+        'box-shadow:inset 0 1px 2px rgba(0,0,0,.1),0 0 8px rgba(33,150,243,.12);',
+      '}',
+      '.ewt4-sw input:checked+.ewt4-sl:before{',
+        'transform:translateX(18px);',
+        'box-shadow:0 1px 4px rgba(33,150,243,.2);',
+      '}',
+
+      /* === 引导遮罩 (高透明度) === */
+      '.ewt4-ov{',
+        'position:fixed;top:0;left:0;width:100%;height:100%;',
+        'background:rgba(0,0,0,.08);',
+        '-webkit-backdrop-filter:blur(8px);',
+        'backdrop-filter:blur(8px);',
+        'z-index:99998;',
+        'display:flex;flex-direction:column;justify-content:center;align-items:center;',
+        'animation:ewt4-ov-in .5s ease forwards;',
+      '}',
+      '@keyframes ewt4-ov-in{0%{opacity:0}100%{opacity:1}}',
+      '.ewt4-ovt{',
+        'color:#1a1a1a;font-size:22px;font-weight:600;',
+        'margin-bottom:20px;text-align:center;line-height:1.7;',
+        '-webkit-backdrop-filter:blur(24px) saturate(200%);',
+        'backdrop-filter:blur(24px) saturate(200%);',
+        'background:linear-gradient(170deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.25),rgba(var(--lg-r),var(--lg-g),var(--lg-b),.08),rgba(var(--lg-r),var(--lg-g),var(--lg-b),.15));',
+        'border:1.5px solid rgba(var(--lg-r),var(--lg-g),var(--lg-b),.4);',
+        'border-radius:20px;padding:24px 32px;',
+        'box-shadow:',
+          '0 6px 20px rgba(0,0,0,.03),',
+          '0 0 0 1px rgba(var(--lg-r),var(--lg-g),var(--lg-b),.12),',
+          'inset 0 1px 0 rgba(var(--lg-r),var(--lg-g),var(--lg-b),.5);',
+        'position:relative;overflow:hidden;',
+      '}',
+      '.ewt4-ovt::before{',
+        'content:"";position:absolute;inset:0;border-radius:20px;',
+        'background:linear-gradient(160deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.2) 0%,transparent 45%);pointer-events:none;',
+      '}',
+      '.ewt4-arr{',
+        'position:fixed;bottom:80px;right:80px;',
+        'color:rgba(0,0,0,.4);font-size:56px;',
+        'animation:ewt4-b 1.5s cubic-bezier(.32,.72,0,1) infinite;transform:rotate(45deg);',
+      '}',
       '@keyframes ewt4-b{0%,100%{transform:translate(0,0) rotate(45deg)}50%{transform:translate(15px,15px) rotate(45deg)}}',
+
+      /* === 滚动条 === */
+      '.ewt4-pnl::-webkit-scrollbar{width:4px}',
+      '.ewt4-pnl::-webkit-scrollbar-track{background:transparent}',
+      '.ewt4-pnl::-webkit-scrollbar-thumb{background:rgba(0,0,0,.06);border-radius:4px}',
+
+      /* === 颜色选择器 === */
+      '.ewt4-color-row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}',
+      '.ewt4-color-btn{',
+        'display:flex;flex-direction:column;align-items:center;gap:5px;',
+        'padding:8px 10px;border-radius:12px;border:1.5px solid transparent;',
+        'background:rgba(0,0,0,.03);cursor:pointer;',
+        'transition:all .2s;',
+      '}',
+      '.ewt4-color-btn:hover{background:rgba(0,0,0,.06)}',
+      '.ewt4-color-btn.active{border-color:rgba(33,150,243,.5);background:rgba(33,150,243,.08)}',
+      '.ewt4-color-dot{',
+        'width:24px;height:24px;border-radius:50%;',
+        'border:1.5px solid rgba(0,0,0,.1);',
+        'box-shadow:inset 0 1px 2px rgba(255,255,255,.5);',
+      '}',
+      '.ewt4-color-name{font-size:11px;color:rgba(0,0,0,.5);white-space:nowrap}',
+
+      /* === 性能优化: 低性能设备降级 === */
+      '@media(prefers-reduced-motion:reduce){',
+        '.ewt4-btn,.ewt4-pnl,.ewt4-ovt{-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}',
+      '}',
+
+      /* === 动态光影追踪 (液态玻璃) === */
+      '.ewt4-btn::before,.ewt4-pnl::before{',
+        'background:radial-gradient(circle at var(--lg-x,50%) var(--lg-y,50%),rgba(var(--lg-r),var(--lg-g),var(--lg-b),.35) 0%,transparent 50%);',
+        'opacity:0;transition:opacity .3s;',
+      '}',
+      '.ewt4-btn:hover::before,.ewt4-pnl:hover::before{opacity:1}',
+
+      /* === 浏览器兼容降级 === */
+      '@supports not (backdrop-filter:blur(1px)){',
+        '.ewt4-btn{background:rgba(255,255,255,.85)}',
+        '.ewt4-pnl{background:rgba(255,255,255,.9)}',
+        '.ewt4-ovt{background:rgba(255,255,255,.92)}',
+      '}',
     ].join('\n');
 
     function _injectCSS() {
@@ -1259,7 +1696,7 @@
       var modMap = {
         autoSkip: EWTH.autoskip, autoPlay: EWTH.autoplay,
         autoCheckPass: EWTH.checkpass, speedControl: EWTH.speed,
-        lockProgress: EWTH.progresslock
+        lockProgress: EWTH.progresslock, muteAudio: EWTH.mute
       };
 
       inp.onchange = function () {
@@ -1271,8 +1708,56 @@
       return row;
     }
 
+    function _makeColorPicker() {
+      var container = document.createElement('div');
+      container.className = 'ewt4-row';
+      container.style.flexDirection = 'column';
+      container.style.alignItems = 'stretch';
+      container.style.gap = '8px';
+
+      var label = document.createElement('div');
+      label.className = 'ewt4-lbl';
+      label.textContent = '玻璃色调';
+      container.appendChild(label);
+
+      var btnRow = document.createElement('div');
+      btnRow.className = 'ewt4-color-row';
+
+      var presets = EWTH.liquidglass.PRESETS;
+      var currentColor = EWTH.store.get('glassColor') || 'white';
+
+      var keys = Object.keys(presets);
+      for (var i = 0; i < keys.length; i++) {
+        (function (key) {
+          var p = presets[key];
+          var btn = document.createElement('button');
+          btn.className = 'ewt4-color-btn' + (key === currentColor ? ' active' : '');
+          btn.title = p.label;
+          btn.setAttribute('data-color', key);
+          var dot = document.createElement('span');
+          dot.className = 'ewt4-color-dot';
+          dot.style.background = 'rgb(' + p.r + ',' + p.g + ',' + p.b + ')';
+          var name = document.createElement('span');
+          name.className = 'ewt4-color-name';
+          name.textContent = p.label;
+          btn.appendChild(dot);
+          btn.appendChild(name);
+          btn.onclick = function () {
+            EWTH.liquidglass.applyColorPreset(key);
+            var allBtns = btnRow.querySelectorAll('.ewt4-color-btn');
+            for (var j = 0; j < allBtns.length; j++) allBtns[j].classList.remove('active');
+            btn.classList.add('active');
+          };
+          btnRow.appendChild(btn);
+        })(keys[i]);
+      }
+
+      container.appendChild(btnRow);
+      return container;
+    }
+
     function _syncAll() {
-      var ids = ['autoSkip', 'autoPlay', 'autoCheckPass', 'speedControl', 'lockProgress', 'brushMode'];
+      var ids = ['autoSkip', 'autoPlay', 'autoCheckPass', 'speedControl', 'lockProgress', 'muteAudio', 'brushMode'];
       for (var i = 0; i < ids.length; i++) {
         var el = document.getElementById('ewt4-' + ids[i]);
         if (el) el.checked = !!EWTH.store.get(ids[i]);
@@ -1282,7 +1767,7 @@
     function _syncBrushMode() {
       var allOn = EWTH.store.get('autoSkip') && EWTH.store.get('autoPlay') &&
                   EWTH.store.get('autoCheckPass') && EWTH.store.get('speedControl') &&
-                  EWTH.store.get('lockProgress');
+                  EWTH.store.get('lockProgress') && EWTH.store.get('muteAudio');
       var el = document.getElementById('ewt4-brushMode');
       if (el) el.checked = allOn;
       EWTH.store.set('brushMode', allOn);
@@ -1304,13 +1789,45 @@
 
     return {
       init: function () {
+        EWTH.logger.info('GUI', 'init called');
         _injectCSS();
+
+        // 检测 backdrop-filter 是否真正可用 (Edge 仿真模式可能声明支持但不渲染)
+        var _testEl = document.createElement('div');
+        _testEl.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;-webkit-backdrop-filter:blur(1px);backdrop-filter:blur(1px)';
+        document.documentElement.appendChild(_testEl);
+        var _computedBdf = getComputedStyle(_testEl).backdropFilter || getComputedStyle(_testEl).webkitBackdropFilter || '';
+        document.documentElement.removeChild(_testEl);
+        var _glassSupported = _computedBdf.indexOf('blur') !== -1;
+        EWTH.logger.info('GUI', 'backdrop-filter: ' + (_glassSupported ? 'supported' : 'NOT supported, using fallback'));
+
+        if (!_glassSupported) {
+          // 注入降级样式
+          var fallbackCSS = document.createElement('style');
+          fallbackCSS.textContent = '.ewt4-btn{background:rgba(255,255,255,.92)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:0 4px 20px rgba(0,0,0,.12)!important;border:1px solid rgba(0,0,0,.1)!important}' +
+            '.ewt4-pnl{background:rgba(255,255,255,.98)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:0 8px 32px rgba(0,0,0,.12)!important;border:1px solid rgba(0,0,0,.08)!important}';
+          document.documentElement.appendChild(fallbackCSS);
+        }
+
         var ct = document.createElement('div'); ct.className = 'ewt4-ct';
+
+        // —— 恢复上次保存的位置 ——
+        var POS_KEY = 'ewt_helper_v4_pos';
+        var savedPos = null;
+        try { savedPos = JSON.parse(localStorage.getItem(POS_KEY)); } catch (e) {}
+        if (savedPos && typeof savedPos.x === 'number' && typeof savedPos.y === 'number') {
+          ct.style.right = 'auto';
+          ct.style.left = savedPos.x + 'px';
+          ct.style.top = savedPos.y + 'px';
+        } else {
+          ct.style.bottom = '20px';
+          ct.style.right = '20px';
+        }
+
         var btn = document.createElement('button');
         btn.className = 'ewt4-btn';
         btn.textContent = '\u{1F4DA}';
         btn.title = '升学E网通助手 v' + VERSION;
-        btn.onclick = function () { EWTH.gui.toggle(); };
         ct.appendChild(btn);
 
         _panel = document.createElement('div'); _panel.className = 'ewt4-pnl';
@@ -1322,18 +1839,120 @@
         _panel.appendChild(_makeToggle('autoCheckPass', '自动过检', false));
         _panel.appendChild(_makeToggle('speedControl', '2倍速播放', false));
         _panel.appendChild(_makeToggle('lockProgress', '锁定进度条', false));
+        _panel.appendChild(_makeToggle('muteAudio', '静音播放', false));
+        _panel.appendChild(_makeColorPicker());
         _panel.appendChild(_makeToggle('brushMode', '刷课模式（一键全开）', true));
         ct.appendChild(_panel);
-        document.body.appendChild(ct);
+
+        // 等待 body 可用再添加
+        function _appendToBody() {
+          if (document.body) {
+            document.body.appendChild(ct);
+            EWTH.logger.info('GUI', 'button appended to body');
+          } else {
+            EWTH.logger.debug('GUI', 'body not ready, waiting...');
+            setTimeout(_appendToBody, 100);
+          }
+        }
+        _appendToBody();
+
+        // —— 拖拽逻辑 ——
+        var _dragging = false;
+        var _dragMoved = false;
+        var _startX = 0, _startY = 0;
+        var _origX = 0, _origY = 0;
+        var DRAG_THRESHOLD = 6; // 移动超过6px才算拖拽
+
+        function _onPointerDown(e) {
+          if (e.button && e.button !== 0) return; // 只响应左键
+          _dragging = true;
+          _dragMoved = false;
+          var rect = ct.getBoundingClientRect();
+          _origX = rect.left;
+          _origY = rect.top;
+          _startX = e.clientX;
+          _startY = e.clientY;
+          ct.style.right = 'auto';
+          ct.style.bottom = 'auto';
+          ct.style.left = _origX + 'px';
+          ct.style.top = _origY + 'px';
+          btn.classList.add('ewt4-dragging');
+          e.preventDefault();
+        }
+
+        function _onPointerMove(e) {
+          if (!_dragging) return;
+          var dx = e.clientX - _startX;
+          var dy = e.clientY - _startY;
+          if (!_dragMoved && Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+          _dragMoved = true;
+          var nx = _origX + dx;
+          var ny = _origY + dy;
+          // 边界限制
+          var W = window.innerWidth, H = window.innerHeight;
+          nx = Math.max(0, Math.min(nx, W - 60));
+          ny = Math.max(0, Math.min(ny, H - 60));
+          ct.style.left = nx + 'px';
+          ct.style.top = ny + 'px';
+        }
+
+        function _onPointerUp(e) {
+          if (!_dragging) return;
+          _dragging = false;
+          btn.classList.remove('ewt4-dragging');
+          if (_dragMoved) {
+            var rect = ct.getBoundingClientRect();
+            try { localStorage.setItem(POS_KEY, JSON.stringify({ x: rect.left, y: rect.top })); } catch (ex) {}
+            // 拖拽结束 → 重新采样颜色
+            if (_open) {} // panel already open after drag
+          } else {
+            EWTH.gui.toggle();
+          }
+        }
+
+        // 鼠标事件
+        btn.addEventListener('mousedown', _onPointerDown);
+        document.addEventListener('mousemove', _onPointerMove);
+        document.addEventListener('mouseup', _onPointerUp);
+        // 触摸事件
+        btn.addEventListener('touchstart', function (e) {
+          var t = e.touches[0];
+          _onPointerDown({ clientX: t.clientX, clientY: t.clientY, button: 0, preventDefault: function(){ e.preventDefault(); } });
+        }, { passive: false });
+        document.addEventListener('touchmove', function (e) {
+          if (!_dragging) return;
+          var t = e.touches[0];
+          _onPointerMove({ clientX: t.clientX, clientY: t.clientY });
+        }, { passive: false });
+        document.addEventListener('touchend', function (e) { _onPointerUp({}); });
+
+        // 液态玻璃效果: 光影追踪 + 点击波纹
+        EWTH.liquidglass.attachHighlightTracking(btn);
+        EWTH.liquidglass.attachRipple(btn);
+        EWTH.liquidglass.attachHighlightTracking(_panel);
 
         _showGuide();
-        EWTH.logger.info('GUI', 'ready v' + VERSION);
+        EWTH.logger.info('GUI', 'ready v' + VERSION + ' (draggable + liquidglass)');
       },
 
       toggle: function () {
         _open = !_open;
         _panel.classList.toggle('open', _open);
-        if (_open && _overlay) { _overlay.remove(); _overlay = null; EWTH.store.set('hasShownGuide', true); }
+        if (_open) {
+          // 根据按钮位置决定面板弹出方向
+          var btnRect = _panel.parentElement.getBoundingClientRect();
+          var btnCenter = btnRect.left + btnRect.width / 2;
+          if (btnCenter < window.innerWidth / 2) {
+            _panel.style.right = 'auto';
+            _panel.style.left = '0';
+            _panel.style.transformOrigin = 'bottom left';
+          } else {
+            _panel.style.right = '0';
+            _panel.style.left = 'auto';
+            _panel.style.transformOrigin = 'bottom right';
+          }
+          if (_overlay) { _overlay.remove(); _overlay = null; EWTH.store.set('hasShownGuide', true); }
+        }
       },
 
       syncCheckbox: function (id, value) {
@@ -1345,7 +1964,7 @@
   })();
 
   // ============================================================
-  // 15. BOOTSTRAP — 初始化 & SPA 导航 (v4.3.0)
+  // 18. BOOTSTRAP — 初始化 & SPA 导航 (v4.4.0)
   // ============================================================
   var _bootRetry = 0;
   var MAX_RETRY = 10;
@@ -1353,43 +1972,61 @@
 
   function _boot() {
     if (_booted) return;
+    EWTH.logger.info('BOOT', 'attempt ' + (_bootRetry + 1));
     if (!document.body) {
+      EWTH.logger.debug('BOOT', 'body not ready, retry ' + (_bootRetry + 1));
       if (_bootRetry++ < MAX_RETRY) setTimeout(_boot, 300);
       return;
     }
 
-    // 步骤0: 初始化存储
-    EWTH.store.init();
+    try {
+      // 步骤0: 初始化存储
+      EWTH.logger.debug('BOOT', 'step 0: store.init');
+      EWTH.store.init();
 
-    // 步骤1: API 拦截（必须最先，阻止 addStudp / getVideodp 请求到达服务器）
-    EWTH.apiIntercept.init();
+      // 步骤1: API 拦截
+      EWTH.logger.debug('BOOT', 'step 1: apiIntercept.init');
+      EWTH.apiIntercept.init();
 
-    // 步骤2: 反检测对抗
-    EWTH.antidetection.init();
+      // 步骤2: 反检测对抗
+      EWTH.logger.debug('BOOT', 'step 2: antidetection.init');
+      EWTH.antidetection.init();
 
-    // 步骤3: GUI 面板
-    EWTH.gui.init();
+      // 步骤3: 液态玻璃系统初始化
+      EWTH.logger.debug('BOOT', 'step 3: liquidglass.init');
+      EWTH.liquidglass.init();
 
-    // 步骤4: 任务页自动跳下一天
-    EWTH.nextday.run();
+      // 步骤4: GUI 面板
+      EWTH.logger.debug('BOOT', 'step 4: gui.init');
+      EWTH.gui.init();
 
-    // 步骤5: 设置日志级别
-    EWTH.logger.setLevel(EWTH.config.DEBUG ? 4 : 0);
+      // 步骤5: 任务页自动跳下一天
+      EWTH.logger.debug('BOOT', 'step 5: nextday.run');
+      EWTH.nextday.run();
 
-    // 步骤6: 恢复上次保存的功能状态
-    if (EWTH.store.get('brushMode')) {
-      EWTH.brushmode.toggle(true);
-    } else {
-      if (EWTH.store.get('autoSkip'))      EWTH.autoskip.toggle(true);
-      if (EWTH.store.get('autoPlay'))      EWTH.autoplay.toggle(true);
-      if (EWTH.store.get('autoCheckPass')) EWTH.checkpass.toggle(true);
-      if (EWTH.store.get('speedControl'))  EWTH.speed.toggle(true);
-      if (EWTH.store.get('lockProgress'))  EWTH.progresslock.toggle(true);
+      // 步骤6: 设置日志级别
+      EWTH.logger.setLevel(EWTH.config.DEBUG ? 4 : 0);
+
+      // 步骤7: 恢复上次保存的功能状态
+      EWTH.logger.debug('BOOT', 'step 7: restore state');
+      if (EWTH.store.get('brushMode')) {
+        EWTH.brushmode.toggle(true);
+      } else {
+        if (EWTH.store.get('autoSkip'))      EWTH.autoskip.toggle(true);
+        if (EWTH.store.get('autoPlay'))      EWTH.autoplay.toggle(true);
+        if (EWTH.store.get('autoCheckPass')) EWTH.checkpass.toggle(true);
+        if (EWTH.store.get('speedControl'))  EWTH.speed.toggle(true);
+        if (EWTH.store.get('lockProgress'))  EWTH.progresslock.toggle(true);
+        if (EWTH.store.get('muteAudio'))     EWTH.mute.toggle(true);
+      }
+
+      _booted = true;
+      _bootRetry = 0;
+      EWTH.logger.info('BOOT', 'v4.4.0 ready');
+    } catch (e) {
+      EWTH.logger.error('BOOT', 'failed at step: ' + e.message);
+      console.error('[EWT Helper] BOOT error:', e);
     }
-
-    _booted = true;
-    _bootRetry = 0;
-    EWTH.logger.info('BOOT', 'v4.3.0 ready');
   }
 
   // ========= 早期拦截: 在 DOM 就绪前就设置 API 拦截 =========
@@ -1421,13 +2058,18 @@
             EWTH.speed._hardenVideo(videos[i]);
             EWTH.speed._apply(videos[i]);
           }
+          // mute 加固
+          if (!videos[i]._ewt_mute_hardened && EWTH.store.get('muteAudio')) {
+            EWTH.mute._hardenVideo(videos[i]);
+            EWTH.mute._apply(videos[i]);
+          }
         }
         // SPA 页面切换时修补黑名单状态
         if (document.body && EWTH.store.get('autoCheckPass')) {
           EWTH.core.patchBlacklistState(document.body);
         }
 
-        // earnest check 弹窗紧急修补 (v4.3.0 新增)
+        // earnest check 弹窗紧急修补 (v4.4.0 新增)
         // 检测 ev/ek 组件 DOM 出现, 立即修补 Context 并执行 bypass
         if (EWTH.store.get('autoCheckPass')) {
           for (var mi = 0; mi < mutations.length; mi++) {
