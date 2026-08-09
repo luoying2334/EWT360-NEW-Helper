@@ -7,8 +7,7 @@
 // @match        https://web.ewt360.com/site-study/*
 // @match        http://web.ewt360.com/site-study/*
 // @namespace    https://github.com/luoying2334/EWT360-NEW-Helper
-// @author       luoying2334
-// @author       Le1-Chu
+// @author       luoying2334, Le1-Chu
 // @icon         https://www.ewt360.com/favicon.ico
 // @grant        none
 // @run-at       document-start
@@ -26,7 +25,7 @@
   var EWTH = {};
 
   EWTH.config = {
-    DEBUG: false,
+    DEBUG: false,// 是否开启调试日志 (控制台输出)
 
     // —— 定时器间隔 (ms) ——
     INTERVAL: {
@@ -1101,7 +1100,7 @@
   })();
 
   // ============================================================
-  // 12. EWTH.mute — 自动静音 (v4.4.0)
+  // 12. EWTH.mute — 自动静音 (v4.5.1)
   // ============================================================
   EWTH.mute = (function () {
     var _active = false;
@@ -1115,6 +1114,9 @@
       if (!v) v = _getVideo();
       if (!v) return;
       try {
+        // 首次静音前记录原始音量/静音状态, 供 stop 恢复
+        if (v._ewt_orig_volume === undefined) v._ewt_orig_volume = v.volume;
+        if (v._ewt_orig_muted === undefined) v._ewt_orig_muted = v.muted;
         if (!v.muted) v.muted = true;
         if (v.volume !== 0) v.volume = 0;
       } catch (e) { /* ignore */ }
@@ -1189,12 +1191,18 @@
       stop: function () {
         document.removeEventListener('volumechange', _onVolumeChange, true);
         if (_interval) { clearInterval(_interval); _interval = null; }
-        // 恢复视频声音
+        // 恢复视频原始音量/静音状态 (而非硬编码0.5)
         var v = _getVideo();
         if (v) {
           try {
-            v.muted = false;
-            if (v.volume === 0) v.volume = 0.5;
+            v.muted = (v._ewt_orig_muted !== undefined) ? v._ewt_orig_muted : false;
+            if (v._ewt_orig_volume !== undefined) {
+              v.volume = v._ewt_orig_volume;
+            } else if (v.volume === 0) {
+              v.volume = 1;
+            }
+            delete v._ewt_orig_volume;
+            delete v._ewt_orig_muted;
           } catch (e) { /* ignore */ }
         }
         EWTH.logger.info('MUTE', 'stopped, audio restored');
@@ -1361,15 +1369,6 @@
   // 16. EWTH.liquidglass — 液态玻璃效果系统
   // ============================================================
   EWTH.liquidglass = (function () {
-    // —— 默认参数 ——
-    var DEFAULTS = {
-      blur: { radius: 16, saturation: 180 },
-      highlight: { angle: 155, intensity: 0.5 },
-      border: { width: 1, opacity: 0.45 },
-      shadow: { blur: 40, opacity: 0.05 },
-      transition: { duration: 350, easing: 'cubic-bezier(.32,.72,0,1)' }
-    };
-
     // —— 颜色预设 ——
     var PRESETS = {
       white:  { r: 255, g: 255, b: 255, label: '经典白', emoji: '⚪' },
@@ -1405,32 +1404,6 @@
       var dm = window.matchMedia('(prefers-reduced-motion: reduce)');
       _isLowPerf = dm.matches || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
       return _isLowPerf;
-    }
-
-    // —— 生成 CSS 字符串 ——
-    function generateCSS(params) {
-      var p = params || {};
-      var blur = p.blur || DEFAULTS.blur;
-      var highlight = p.highlight || DEFAULTS.highlight;
-      var border = p.border || DEFAULTS.border;
-      var shadow = p.shadow || DEFAULTS.shadow;
-      var transition = p.transition || DEFAULTS.transition;
-
-      var radius = isLowPerformance() ? Math.min(blur.radius, 8) : blur.radius;
-      var sat = isLowPerformance() ? 100 : blur.saturation;
-
-      var css = {};
-
-      // 核心模糊
-      if (supportsBackdropFilter()) {
-        css.backdropFilter = 'blur(' + radius + 'px) saturate(' + sat + '%)';
-        css.webkitBackdropFilter = 'blur(' + radius + 'px) saturate(' + sat + '%)';
-      } else {
-        // 降级: 纯色背景
-        css.background = 'rgba(255,255,255,.88)';
-      }
-
-      return css;
     }
 
     // —— 动态光影追踪 ——
@@ -1477,12 +1450,10 @@
     }
 
     return {
-      DEFAULTS: DEFAULTS,
       PRESETS: PRESETS,
       applyColorPreset: applyColorPreset,
       supportsBackdropFilter: supportsBackdropFilter,
       isLowPerformance: isLowPerformance,
-      generateCSS: generateCSS,
       attachHighlightTracking: attachHighlightTracking,
       attachRipple: attachRipple,
       init: function () {
@@ -1501,7 +1472,16 @@
     var _open = false;
     var _panel = null;
     var _overlay = null;
+    var _ct = null;
+    var _btn = null;
     var VERSION = '4.5.2';
+
+    // —— 拖拽状态 (模块级: SPA 重连重建 GUI 时不重置、不叠加监听) ——
+    var _listenersBound = false;
+    var _dragging = false, _dragMoved = false;
+    var _startX = 0, _startY = 0, _origX = 0, _origY = 0;
+    var DRAG_THRESHOLD = 6;   // 移动超过6px才算拖拽
+    var POS_KEY = 'ewt_helper_v4_pos';
 
     var CSS = [
       /* === CSS 变量 — 液态玻璃颜色 === */
@@ -1530,15 +1510,6 @@
         'visibility:visible !important;',
         'opacity:1 !important;',
         'z-index:2147483647 !important;',
-      '}',
-      '.ewt4-btn::before{',
-        'content:"";position:absolute;inset:0;border-radius:50%;',
-        'background:linear-gradient(155deg,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.3) 0%,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.03) 40%,transparent 65%);pointer-events:none;',
-      '}',
-      '.ewt4-btn::after{',
-        'content:"";position:absolute;top:5px;left:10px;width:16px;height:9px;',
-        'background:radial-gradient(ellipse,rgba(var(--lg-r),var(--lg-g),var(--lg-b),.4) 0%,transparent 70%);',
-        'border-radius:50%;transform:rotate(-25deg);pointer-events:none;',
       '}',
       '.ewt4-btn::before{',
         'content:"";position:absolute;inset:0;border-radius:50%;',
@@ -1931,6 +1902,66 @@
       document.body.appendChild(_overlay);
     }
 
+    // —— 拖拽逻辑 (模块级: 引用 _ct/_btn, document 监听只绑一次) ——
+    function _onPointerDown(e) {
+      if (e.button && e.button !== 0) return; // 只响应左键
+      _dragging = true;
+      _dragMoved = false;
+      var rect = _ct.getBoundingClientRect();
+      _origX = rect.left;
+      _origY = rect.top;
+      _startX = e.clientX;
+      _startY = e.clientY;
+      _ct.style.right = 'auto';
+      _ct.style.bottom = 'auto';
+      _ct.style.left = _origX + 'px';
+      _ct.style.top = _origY + 'px';
+      _btn.classList.add('ewt4-dragging');
+      e.preventDefault();
+    }
+
+    function _onPointerMove(e) {
+      if (!_dragging) return;
+      var dx = e.clientX - _startX;
+      var dy = e.clientY - _startY;
+      if (!_dragMoved && Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+      _dragMoved = true;
+      var nx = _origX + dx;
+      var ny = _origY + dy;
+      // 边界限制
+      var W = window.innerWidth, H = window.innerHeight;
+      nx = Math.max(0, Math.min(nx, W - 60));
+      ny = Math.max(0, Math.min(ny, H - 60));
+      _ct.style.left = nx + 'px';
+      _ct.style.top = ny + 'px';
+    }
+
+    function _onPointerUp(e) {
+      if (!_dragging) return;
+      _dragging = false;
+      _btn.classList.remove('ewt4-dragging');
+      if (_dragMoved) {
+        var rect = _ct.getBoundingClientRect();
+        try { localStorage.setItem(POS_KEY, JSON.stringify({ x: rect.left, y: rect.top })); } catch (ex) {}
+      } else {
+        EWTH.gui.toggle();
+      }
+    }
+
+    // —— document 级监听只绑定一次 (防 SPA 重连叠加) ——
+    function _bindGlobalListeners() {
+      if (_listenersBound) return;
+      _listenersBound = true;
+      document.addEventListener('mousemove', _onPointerMove);
+      document.addEventListener('mouseup', _onPointerUp);
+      document.addEventListener('touchmove', function (e) {
+        if (!_dragging) return;
+        var t = e.touches[0];
+        _onPointerMove({ clientX: t.clientX, clientY: t.clientY });
+      }, { passive: false });
+      document.addEventListener('touchend', function (e) { _onPointerUp({}); });
+    }
+
     return {
       init: function () {
         EWTH.logger.info('GUI', 'init called');
@@ -1954,9 +1985,9 @@
         }
 
         var ct = document.createElement('div'); ct.className = 'ewt4-ct';
+        _ct = ct;
 
         // —— 恢复上次保存的位置 ——
-        var POS_KEY = 'ewt_helper_v4_pos';
         var savedPos = null;
         try { savedPos = JSON.parse(localStorage.getItem(POS_KEY)); } catch (e) {}
         if (savedPos && typeof savedPos.x === 'number' && typeof savedPos.y === 'number') {
@@ -1972,6 +2003,7 @@
         btn.className = 'ewt4-btn';
         btn.textContent = '\u{1F4DA}';
         btn.title = '升学E网通助手 v' + VERSION;
+        _btn = btn;
         ct.appendChild(btn);
 
         _panel = document.createElement('div'); _panel.className = 'ewt4-pnl';
@@ -2001,75 +2033,13 @@
         }
         _appendToBody();
 
-        // —— 拖拽逻辑 ——
-        var _dragging = false;
-        var _dragMoved = false;
-        var _startX = 0, _startY = 0;
-        var _origX = 0, _origY = 0;
-        var DRAG_THRESHOLD = 6; // 移动超过6px才算拖拽
-
-        function _onPointerDown(e) {
-          if (e.button && e.button !== 0) return; // 只响应左键
-          _dragging = true;
-          _dragMoved = false;
-          var rect = ct.getBoundingClientRect();
-          _origX = rect.left;
-          _origY = rect.top;
-          _startX = e.clientX;
-          _startY = e.clientY;
-          ct.style.right = 'auto';
-          ct.style.bottom = 'auto';
-          ct.style.left = _origX + 'px';
-          ct.style.top = _origY + 'px';
-          btn.classList.add('ewt4-dragging');
-          e.preventDefault();
-        }
-
-        function _onPointerMove(e) {
-          if (!_dragging) return;
-          var dx = e.clientX - _startX;
-          var dy = e.clientY - _startY;
-          if (!_dragMoved && Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
-          _dragMoved = true;
-          var nx = _origX + dx;
-          var ny = _origY + dy;
-          // 边界限制
-          var W = window.innerWidth, H = window.innerHeight;
-          nx = Math.max(0, Math.min(nx, W - 60));
-          ny = Math.max(0, Math.min(ny, H - 60));
-          ct.style.left = nx + 'px';
-          ct.style.top = ny + 'px';
-        }
-
-        function _onPointerUp(e) {
-          if (!_dragging) return;
-          _dragging = false;
-          btn.classList.remove('ewt4-dragging');
-          if (_dragMoved) {
-            var rect = ct.getBoundingClientRect();
-            try { localStorage.setItem(POS_KEY, JSON.stringify({ x: rect.left, y: rect.top })); } catch (ex) {}
-            // 拖拽结束 → 重新采样颜色
-            if (_open) {} // panel already open after drag
-          } else {
-            EWTH.gui.toggle();
-          }
-        }
-
-        // 鼠标事件
+        // —— 拖拽逻辑 (模块级函数; document 监听只绑一次) ——
+        _bindGlobalListeners();
         btn.addEventListener('mousedown', _onPointerDown);
-        document.addEventListener('mousemove', _onPointerMove);
-        document.addEventListener('mouseup', _onPointerUp);
-        // 触摸事件
         btn.addEventListener('touchstart', function (e) {
           var t = e.touches[0];
           _onPointerDown({ clientX: t.clientX, clientY: t.clientY, button: 0, preventDefault: function(){ e.preventDefault(); } });
         }, { passive: false });
-        document.addEventListener('touchmove', function (e) {
-          if (!_dragging) return;
-          var t = e.touches[0];
-          _onPointerMove({ clientX: t.clientX, clientY: t.clientY });
-        }, { passive: false });
-        document.addEventListener('touchend', function (e) { _onPointerUp({}); });
 
         // 液态玻璃效果: 光影追踪 + 点击波纹
         EWTH.liquidglass.attachHighlightTracking(btn);
@@ -2113,7 +2083,7 @@
   })();
 
   // ============================================================
-  // 18. BOOTSTRAP — 初始化 & SPA 导航 (v4.4.0)
+  // 18. BOOTSTRAP — 初始化 & SPA 导航 (v4.5.1)
   // ============================================================
   var _bootRetry = 0;
   var MAX_RETRY = 10;
