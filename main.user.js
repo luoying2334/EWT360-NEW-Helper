@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         升学E网通助手 v4.4.0
+// @name         升学E网通助手 v4.6.0
 // @version      4.6.0
-// @description  新增：液态玻璃UI + 自动静音 + UI色调自定义 | 适配2026.7.30平台更新
+// @description  玻璃色调折叠 + 液态玻璃效果开关 + 修复自动连播(Issue #5) | 适配2026.7.30平台更新
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        https://web.ewt360.com/site-study/*
@@ -805,7 +805,8 @@
     var _interval = null;
     var _lastLessonId = null;
     var _lastSwitchTime = 0;
-    var _attemptedIds = new Set(); // 记录已尝试的课程ID，避免循环
+    var _attemptedIds = {}; // 记录已尝试的课程ID，避免循环（用对象模拟Set）
+    var _attemptedCount = 0;
     var COOLDOWN = 8000;
 
     function _isFinished() {
@@ -849,13 +850,13 @@
 
       // 从当前课程之后查找未完成的课程
       for (var j = curIdx + 1; j < list.length; j++) {
-        if (!_isLessonCompleted(list[j]) && !_attemptedIds.has(list[j].lessonId)) {
+        if (!_isLessonCompleted(list[j]) && !_attemptedIds[list[j].lessonId]) {
           return list[j];
         }
       }
       // 从头查找未完成的课程
       for (var k = 0; k < curIdx; k++) {
-        if (!_isLessonCompleted(list[k]) && !_attemptedIds.has(list[k].lessonId)) {
+        if (!_isLessonCompleted(list[k]) && !_attemptedIds[list[k].lessonId]) {
           return list[k];
         }
       }
@@ -875,7 +876,8 @@
         var next = _findNextLesson(inst);
         if (!next) {
           EWTH.logger.info('AUTOPLAY', 'all lessons done or stuck, clearing attempted list');
-          _attemptedIds.clear(); // 清空尝试记录
+          _attemptedIds = {}; // 清空尝试记录
+          _attemptedCount = 0;
           var hwId = inst.state.homeworkId || '';
           try { sessionStorage.setItem('ewt_nextday_auto', '1'); } catch (e) {}
           location.href = location.pathname + location.search + '#/holiday/student-task-overview?homeworkId=' + hwId;
@@ -884,17 +886,30 @@
         if (next.lessonId === _lastLessonId && now - _lastSwitchTime < COOLDOWN * 2) return;
 
         // 记录已尝试的课程ID
-        _attemptedIds.add(next.lessonId);
-        EWTH.logger.info('AUTOPLAY', 'attempting lesson: ' + next.title + ' (attempted: ' + _attemptedIds.size + ')');
+        _attemptedIds[next.lessonId] = true;
+        _attemptedCount++;
+        EWTH.logger.info('AUTOPLAY', 'attempting lesson: ' + next.title + ' (attempted: ' + _attemptedCount + ')');
 
         _lastLessonId = next.lessonId;
         _lastSwitchTime = now;
 
         var hashPath = window.location.hash.split('?')[0].replace(/^#+/, '');
-        var sp = new URLSearchParams(window.location.hash.split('?')[1] || '');
-        sp.set('lessonId', String(next.lessonId));
-        sp.set('videoPoint', '0');
-        var newHash = '#' + hashPath + '?' + sp.toString();
+        var searchStr = window.location.hash.split('?')[1] || '';
+        var params = {};
+        var pairs = searchStr.split('&');
+        for (var p = 0; p < pairs.length; p++) {
+          var pair = pairs[p].split('=');
+          if (pair[0]) params[decodeURIComponent(pair[0])] = decodeURIComponent(pair[1] || '');
+        }
+        params.lessonId = String(next.lessonId);
+        params.videoPoint = '0';
+        var newPairs = [];
+        for (var key in params) {
+          if (params.hasOwnProperty(key)) {
+            newPairs.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key]));
+          }
+        }
+        var newHash = '#' + hashPath + '?' + newPairs.join('&');
         location.hash = newHash;
         setTimeout(function () { location.reload(); }, 300);
 
@@ -1486,7 +1501,7 @@
     var _open = false;
     var _panel = null;
     var _overlay = null;
-    var VERSION = '4.4.0';
+    var VERSION = '4.6.0';
 
     var CSS = [
       /* === CSS 变量 — 液态玻璃颜色 === */
@@ -2161,7 +2176,7 @@
 
       _booted = true;
       _bootRetry = 0;
-      EWTH.logger.info('BOOT', 'v4.4.0 ready');
+      EWTH.logger.info('BOOT', 'v4.6.0 ready');
     } catch (e) {
       EWTH.logger.error('BOOT', 'failed at step: ' + e.message);
       console.error('[EWT Helper] BOOT error:', e);
