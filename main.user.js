@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         升学E网通助手 v5.2.0-beta
-// @version      5.2.0-beta
+// @name         升学E网通助手 v4.5.2
+// @version      4.5.2
 // @description  性能优化 + 修复自动连播(Issue #5) + 液态玻璃效果开关 | 适配2026.7.30平台更新
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
@@ -1501,7 +1501,7 @@
     var _open = false;
     var _panel = null;
     var _overlay = null;
-    var VERSION = '5.2.0-beta';
+    var VERSION = '4.5.2';
 
     var CSS = [
       /* === CSS 变量 — 液态玻璃颜色 === */
@@ -2176,7 +2176,7 @@
 
       _booted = true;
       _bootRetry = 0;
-      EWTH.logger.info('BOOT', 'v5.2.0-beta ready');
+      EWTH.logger.info('BOOT', 'v4.5.2 ready');
     } catch (e) {
       EWTH.logger.error('BOOT', 'failed at step: ' + e.message);
       console.error('[EWT Helper] BOOT error:', e);
