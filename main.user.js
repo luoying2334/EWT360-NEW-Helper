@@ -804,6 +804,7 @@
     var _interval = null;
     var _lastLessonId = null;
     var _lastSwitchTime = 0;
+    var _attemptedIds = new Set(); // 记录已尝试的课程ID，避免循环
     var COOLDOWN = 8000;
 
     function _isFinished() {
@@ -812,6 +813,17 @@
       for (var i = 0; i < ids.length; i++) {
         if (document.querySelector('img[src*="' + ids[i] + '"]')) return true;
       }
+      return false;
+    }
+
+    // 判断课程是否已完成（兼容综合素养等特殊课程）
+    function _isLessonCompleted(lesson) {
+      // 普通课程: status === 2 表示已完成
+      if (lesson.status === 2) return true;
+      // 综合素养或其他类型: status === 3 也可能是完成状态
+      if (lesson.status === 3) return true;
+      // 检查是否有 progress 字段
+      if (lesson.progress === 100 || lesson.progress === 1) return true;
       return false;
     }
 
@@ -826,11 +838,25 @@
         if (String(list[i].lessonId) === String(cur.lessonId)) { curIdx = i; break; }
       }
       if (curIdx === -1) return list[0];
-      for (var j = curIdx + 1; j < list.length; j++) {
-        if (list[j].status !== 2) return list[j];
+
+      // 记录每个课程的状态（调试用）
+      for (var d = 0; d < list.length; d++) {
+        EWTH.logger.debug('AUTOPLAY', 'lesson[' + d + '] status=' + list[d].status +
+          ' title=' + (list[d].title || '').substring(0, 10) +
+          ' completed=' + _isLessonCompleted(list[d]));
       }
+
+      // 从当前课程之后查找未完成的课程
+      for (var j = curIdx + 1; j < list.length; j++) {
+        if (!_isLessonCompleted(list[j]) && !_attemptedIds.has(list[j].lessonId)) {
+          return list[j];
+        }
+      }
+      // 从头查找未完成的课程
       for (var k = 0; k < curIdx; k++) {
-        if (list[k].status !== 2) return list[k];
+        if (!_isLessonCompleted(list[k]) && !_attemptedIds.has(list[k].lessonId)) {
+          return list[k];
+        }
       }
       return null;
     }
@@ -847,13 +873,18 @@
 
         var next = _findNextLesson(inst);
         if (!next) {
-          EWTH.logger.info('AUTOPLAY', 'all lessons done, redirecting');
+          EWTH.logger.info('AUTOPLAY', 'all lessons done or stuck, clearing attempted list');
+          _attemptedIds.clear(); // 清空尝试记录
           var hwId = inst.state.homeworkId || '';
           try { sessionStorage.setItem('ewt_nextday_auto', '1'); } catch (e) {}
           location.href = location.pathname + location.search + '#/holiday/student-task-overview?homeworkId=' + hwId;
           return;
         }
         if (next.lessonId === _lastLessonId && now - _lastSwitchTime < COOLDOWN * 2) return;
+
+        // 记录已尝试的课程ID
+        _attemptedIds.add(next.lessonId);
+        EWTH.logger.info('AUTOPLAY', 'attempting lesson: ' + next.title + ' (attempted: ' + _attemptedIds.size + ')');
 
         _lastLessonId = next.lessonId;
         _lastSwitchTime = now;
