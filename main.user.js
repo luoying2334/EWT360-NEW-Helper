@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         升学E网通助手 v4.4.0
-// @version      4.4.0
+// @version      4.6.0
 // @description  新增：液态玻璃UI + 自动静音 + UI色调自定义 | 适配2026.7.30平台更新
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
@@ -131,7 +131,8 @@
       muteAudio:      false,
       brushMode:      false,
       hasShownGuide:  false,
-      glassColor:     'white'
+      glassColor:     'white',
+      glassEffect:    true   // 液态玻璃效果开关
     };
 
     function _save() {
@@ -1682,6 +1683,29 @@
       '}',
       '.ewt4-color-name{font-size:11px;color:rgba(0,0,0,.5);white-space:nowrap}',
 
+      /* === 折叠面板 === */
+      '.ewt4-collapse{',
+        'border-top:1px solid rgba(0,0,0,.06);',
+        'padding-top:4px;',
+        'margin-top:4px;',
+      '}',
+      '.ewt4-collapse-header{',
+        'display:flex;align-items:center;justify-content:space-between;',
+        'cursor:pointer;padding:8px 0;user-select:none;',
+      '}',
+      '.ewt4-collapse-header:hover{opacity:.8}',
+      '.ewt4-collapse-title{font-size:15px;font-weight:500;color:#1a1a1a}',
+      '.ewt4-collapse-arrow{',
+        'transition:transform .3s cubic-bezier(.32,.72,0,1);',
+        'font-size:12px;color:rgba(0,0,0,.4);',
+      '}',
+      '.ewt4-collapse-arrow.expanded{transform:rotate(90deg)}',
+      '.ewt4-collapse-content{',
+        'max-height:0;overflow:hidden;',
+        'transition:max-height .3s cubic-bezier(.32,.72,0,1);',
+      '}',
+      '.ewt4-collapse-content.expanded{max-height:300px}',
+
       /* === 性能优化: 低性能设备降级 === */
       '@media(prefers-reduced-motion:reduce){',
         '.ewt4-btn,.ewt4-pnl,.ewt4-ovt{-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}',
@@ -1735,25 +1759,81 @@
         var checked = inp.checked;
         EWTH.store.set(id, checked);
         if (id === 'brushMode') { EWTH.brushmode.toggle(checked); _syncAll(); }
+        else if (id === 'glassEffect') { _applyGlassStyle(checked); }
         else if (modMap[id]) { modMap[id].toggle(checked); _syncBrushMode(); }
       };
       return row;
     }
 
+    // 应用液态玻璃样式切换
+    function _applyGlassStyle(enabled) {
+      var btn = document.querySelector('.ewt4-btn');
+      var pnl = document.querySelector('.ewt4-pnl');
+
+      if (!enabled) {
+        // 纯色背景模式
+        if (btn) {
+          btn.style.background = 'rgba(255,255,255,.95)';
+          btn.style.backdropFilter = 'none';
+          btn.style.webkitBackdropFilter = 'none';
+          btn.style.boxShadow = '0 2px 12px rgba(0,0,0,.12)';
+          btn.style.border = '1px solid rgba(0,0,0,.08)';
+          btn.style.color = '#1a1a1a';
+        }
+        if (pnl) {
+          pnl.style.background = 'rgba(255,255,255,.98)';
+          pnl.style.backdropFilter = 'none';
+          pnl.style.webkitBackdropFilter = 'none';
+          pnl.style.boxShadow = '0 8px 32px rgba(0,0,0,.12)';
+          pnl.style.border = '1px solid rgba(0,0,0,.08)';
+        }
+        EWTH.logger.info('GUI', 'glass effect disabled');
+      } else {
+        // 恢复液态玻璃样式（移除内联样式，使用 CSS 类）
+        if (btn) {
+          btn.style.background = '';
+          btn.style.backdropFilter = '';
+          btn.style.webkitBackdropFilter = '';
+          btn.style.boxShadow = '';
+          btn.style.border = '';
+          btn.style.color = '';
+        }
+        if (pnl) {
+          pnl.style.background = '';
+          pnl.style.backdropFilter = '';
+          pnl.style.webkitBackdropFilter = '';
+          pnl.style.boxShadow = '';
+          pnl.style.border = '';
+        }
+        EWTH.logger.info('GUI', 'glass effect enabled');
+      }
+    }
+
     function _makeColorPicker() {
-      var container = document.createElement('div');
-      container.className = 'ewt4-row';
-      container.style.flexDirection = 'column';
-      container.style.alignItems = 'stretch';
-      container.style.gap = '8px';
+      // 折叠容器
+      var collapse = document.createElement('div');
+      collapse.className = 'ewt4-collapse';
 
-      var label = document.createElement('div');
-      label.className = 'ewt4-lbl';
-      label.textContent = '玻璃色调';
-      container.appendChild(label);
+      // 折叠头部
+      var header = document.createElement('div');
+      header.className = 'ewt4-collapse-header';
+      var title = document.createElement('span');
+      title.className = 'ewt4-collapse-title';
+      title.textContent = '玻璃色调';
+      var arrow = document.createElement('span');
+      arrow.className = 'ewt4-collapse-arrow';
+      arrow.textContent = '▶';
+      header.appendChild(title);
+      header.appendChild(arrow);
 
+      // 折叠内容
+      var content = document.createElement('div');
+      content.className = 'ewt4-collapse-content';
+
+      // 颜色按钮行
       var btnRow = document.createElement('div');
       btnRow.className = 'ewt4-color-row';
+      btnRow.style.padding = '8px 0';
 
       var presets = EWTH.liquidglass.PRESETS;
       var currentColor = EWTH.store.get('glassColor') || 'white';
@@ -1774,7 +1854,8 @@
           name.textContent = p.label;
           btn.appendChild(dot);
           btn.appendChild(name);
-          btn.onclick = function () {
+          btn.onclick = function (e) {
+            e.stopPropagation(); // 防止触发折叠
             EWTH.liquidglass.applyColorPreset(key);
             var allBtns = btnRow.querySelectorAll('.ewt4-color-btn');
             for (var j = 0; j < allBtns.length; j++) allBtns[j].classList.remove('active');
@@ -1784,8 +1865,24 @@
         })(keys[i]);
       }
 
-      container.appendChild(btnRow);
-      return container;
+      content.appendChild(btnRow);
+
+      // 折叠展开/收起逻辑（默认折叠）
+      var isExpanded = false;
+      header.onclick = function () {
+        isExpanded = !isExpanded;
+        if (isExpanded) {
+          arrow.classList.add('expanded');
+          content.classList.add('expanded');
+        } else {
+          arrow.classList.remove('expanded');
+          content.classList.remove('expanded');
+        }
+      };
+
+      collapse.appendChild(header);
+      collapse.appendChild(content);
+      return collapse;
     }
 
     function _syncAll() {
@@ -1872,6 +1969,7 @@
         _panel.appendChild(_makeToggle('speedControl', '2倍速播放', false));
         _panel.appendChild(_makeToggle('lockProgress', '锁定进度条', false));
         _panel.appendChild(_makeToggle('muteAudio', '静音播放', false));
+        _panel.appendChild(_makeToggle('glassEffect', '液态玻璃效果', false));
         _panel.appendChild(_makeColorPicker());
         _panel.appendChild(_makeToggle('brushMode', '刷课模式（一键全开）', true));
         ct.appendChild(_panel);
@@ -1991,6 +2089,10 @@
         var el = document.getElementById('ewt4-' + id);
         if (el) el.checked = value;
         _syncBrushMode();
+      },
+
+      applyGlassStyle: function (enabled) {
+        _applyGlassStyle(enabled);
       }
     };
   })();
@@ -2050,6 +2152,11 @@
         if (EWTH.store.get('speedControl'))  EWTH.speed.toggle(true);
         if (EWTH.store.get('lockProgress'))  EWTH.progresslock.toggle(true);
         if (EWTH.store.get('muteAudio'))     EWTH.mute.toggle(true);
+      }
+
+      // 恢复液态玻璃效果状态
+      if (!EWTH.store.get('glassEffect')) {
+        EWTH.gui.applyGlassStyle(false);
       }
 
       _booted = true;
