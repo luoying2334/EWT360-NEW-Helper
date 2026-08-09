@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         升学E网通助手 v4.4.1
-// @version      4.4.1
-// @description  修复：静音恢复音量、SPA监听叠加、清理冗余 | 适配2026.7.30平台更新
+// @name         升学E网通助手 v4.5.1
+// @version      4.5.1
+// @description  合并维护者更新：修复自动连播循环 + 静音恢复音量 + SPA监听叠加 | 适配2026.7.30平台更新
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        https://web.ewt360.com/site-study/*
@@ -1085,7 +1085,7 @@
   })();
 
   // ============================================================
-  // 12. EWTH.mute — 自动静音 (v4.4.1 修复音量恢复)
+  // 12. EWTH.mute — 自动静音 (v4.5.1)
   // ============================================================
   EWTH.mute = (function () {
     var _active = false;
@@ -1459,7 +1459,7 @@
     var _overlay = null;
     var _ct = null;
     var _btn = null;
-    var VERSION = '4.4.1';
+    var VERSION = '4.5.1';
 
     // —— 拖拽状态 (模块级: SPA 重连重建 GUI 时不重置、不叠加监听) ——
     var _listenersBound = false;
@@ -1967,7 +1967,7 @@
   })();
 
   // ============================================================
-  // 18. BOOTSTRAP — 初始化 & SPA 导航 (v4.4.1)
+  // 18. BOOTSTRAP — 初始化 & SPA 导航 (v4.5.1)
   // ============================================================
   var _bootRetry = 0;
   var MAX_RETRY = 10;
@@ -2025,7 +2025,7 @@
 
       _booted = true;
       _bootRetry = 0;
-      EWTH.logger.info('BOOT', 'v4.4.1 ready');
+      EWTH.logger.info('BOOT', 'v4.5.1 ready');
     } catch (e) {
       EWTH.logger.error('BOOT', 'failed at step: ' + e.message);
       console.error('[EWT Helper] BOOT error:', e);
