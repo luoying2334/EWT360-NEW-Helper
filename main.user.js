@@ -1477,7 +1477,7 @@
     var _overlay = null;
     var _ct = null;
     var _btn = null;
-    var VERSION = '4.5.2';
+    var VERSION = '4.5.3';
 
     // —— 拖拽状态 (模块级: SPA 重连重建 GUI 时不重置、不叠加监听) ——
     var _listenersBound = false;
@@ -2149,7 +2149,7 @@
 
       _booted = true;
       _bootRetry = 0;
-      EWTH.logger.info('BOOT', 'v4.5.2 ready');
+      EWTH.logger.info('BOOT', 'v4.5.3 ready');
     } catch (e) {
       EWTH.logger.error('BOOT', 'failed at step: ' + e.message);
       console.error('[EWT Helper] BOOT error:', e);
