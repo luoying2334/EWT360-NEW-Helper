@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         升学E网通助手 v4.5.2
-// @version      4.5.2
-// @description  性能优化 + 修复自动连播(Issue #5) + 液态玻璃效果开关 | 适配2026.7.30平台更新
+// @name         升学E网通助手 v4.5.3
+// @version      4.5.3
+// @description  修复滑块(点选)验证码无法绕过(Issue #10) + 性能优化 + 修复自动连播(Issue #5) + 液态玻璃效果开关 | 适配2026.7.30平台更新
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        https://web.ewt360.com/site-study/*
@@ -185,6 +185,9 @@
     FAKE_MAP[EWTH.config.API.ADD_VIDEOCSS] = '{"success":true}';           // CAPTCHA检测: ek.reportVideoPoint读success
     FAKE_MAP[EWTH.config.API.GET_BLACK]    = '{"data":false}';             // 始终返回"非黑名单"
     FAKE_MAP[EWTH.config.API.DOWNGRADE]    = '{"data":{"seriousCheckDownGrade":true}}'; // 降级配置
+    // 点选验证码绕过 (issue#10): 5564 的 initCaptchaImage 若收到非空 captchaToken 会直接 successCallback 免点选
+    FAKE_MAP[EWTH.config.API.CAPTCHA_GET]   = '{"code":"200","msg":"ok","data":{"captchaToken":"ewt_helper_bypass","captchaSessionId":"ewt_helper_bypass","captchaImgBase64":""}}';
+    FAKE_MAP[EWTH.config.API.CAPTCHA_VERIFY] = '{"code":"200","msg":"ok","data":{"verifyResult":true,"captchaToken":"ewt_helper_bypass"}}';
 
     function _matchAny(url, patterns) {
       for (var i = 0; i < patterns.length; i++) {
