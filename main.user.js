@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         升学E网通助手 v4.5.3
-// @version      4.5.3
-// @description  修复滑块(点选)验证码无法绕过(Issue #10) + 性能优化 + 修复自动连播(Issue #5) + 液态玻璃效果开关 | 适配2026.7.30平台更新
+// @name         升学E网通助手 v4.6.0
+// @version      4.6.0
+// @description  新增禁止暂停开关 + 修复滑块(点选)验证码无法绕过(Issue #10) + 性能优化 + 修复自动连播(Issue #5) + 液态玻璃效果开关 | 适配2026.7.30平台更新
 // @match        https://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        http://teacher.ewt360.com/ewtbend/bend/index/index.html*
 // @match        https://web.ewt360.com/site-study/*
@@ -128,6 +128,7 @@
       speedControl:   false,
       lockProgress:   false,
       muteAudio:      false,
+      preventPause:   false,   // 禁止暂停 (v4.6.0)
       brushMode:      false,
       hasShownGuide:  false,
       glassColor:     'white',
@@ -1342,17 +1343,53 @@
   })();
 
   // ============================================================
-  // 15. EWTH.brushmode — 一键刷课
+  // 15. EWTH.nopause — 禁止暂停 (v4.6.0)
+  // ============================================================
+  EWTH.nopause = (function () {
+    // 平台行为: 平台组件会在切后台/切页等场景调用 video.pause() 中断播放
+    // 我们为什么这样绕: 捕获阶段监听 pause 事件, 在目标/冒泡阶段处理前立即 play() 恢复
+    var _listenersBound = false;
+
+    function _onPause(e) {
+      if (!EWTH.store.get('preventPause')) return;
+      var v = e.target;
+      if (v && v.tagName === 'VIDEO') {
+        if (v.ended) return; // 播完自然结束不干预, 否则会触发重播
+        var p = v.play();
+        if (p && p.catch) p.catch(function () {}); // 忽略加载/权限等 play 失败 (极旧环境 play 可能不返回 Promise)
+      }
+    }
+
+    return {
+      toggle: function (on) {
+        if (on) {
+          if (_listenersBound) return; // 防叠加: SPA 重连重复调用不重复绑定
+          _listenersBound = true;
+          document.addEventListener('pause', _onPause, true);
+          EWTH.logger.info('NOPAUSE', 'enabled');
+        } else {
+          if (!_listenersBound) return;
+          _listenersBound = false;
+          document.removeEventListener('pause', _onPause, true);
+          EWTH.logger.info('NOPAUSE', 'disabled');
+        }
+      }
+    };
+  })();
+
+  // ============================================================
+  // 16. EWTH.brushmode — 一键刷课
   // ============================================================
   EWTH.brushmode = (function () {
-    var KEYS = ['autoSkip', 'autoPlay', 'autoCheckPass', 'speedControl', 'lockProgress', 'muteAudio'];
+    var KEYS = ['autoSkip', 'autoPlay', 'autoCheckPass', 'speedControl', 'lockProgress', 'muteAudio', 'preventPause'];
     var MODS = {
       autoSkip:      EWTH.autoskip,
       autoPlay:      EWTH.autoplay,
       autoCheckPass: EWTH.checkpass,
       speedControl:  EWTH.speed,
       lockProgress:  EWTH.progresslock,
-      muteAudio:     EWTH.mute
+      muteAudio:     EWTH.mute,
+      preventPause:  EWTH.nopause
     };
 
     return {
@@ -1369,7 +1406,7 @@
   })();
 
   // ============================================================
-  // 16. EWTH.liquidglass — 液态玻璃效果系统
+  // 17. EWTH.liquidglass — 液态玻璃效果系统
   // ============================================================
   EWTH.liquidglass = (function () {
     // —— 颜色预设 ——
@@ -1469,7 +1506,7 @@
   })();
 
   // ============================================================
-  // 17. EWTH.gui — 浮动控制面板 (液态玻璃版)
+  // 18. EWTH.gui — 浮动控制面板 (液态玻璃版)
   // ============================================================
   EWTH.gui = (function () {
     var _open = false;
@@ -1477,7 +1514,7 @@
     var _overlay = null;
     var _ct = null;
     var _btn = null;
-    var VERSION = '4.5.3';
+    var VERSION = '4.6.0';
 
     // —— 拖拽状态 (模块级: SPA 重连重建 GUI 时不重置、不叠加监听) ——
     var _listenersBound = false;
@@ -1741,7 +1778,8 @@
       var modMap = {
         autoSkip: EWTH.autoskip, autoPlay: EWTH.autoplay,
         autoCheckPass: EWTH.checkpass, speedControl: EWTH.speed,
-        lockProgress: EWTH.progresslock, muteAudio: EWTH.mute
+        lockProgress: EWTH.progresslock, muteAudio: EWTH.mute,
+        preventPause: EWTH.nopause
       };
 
       inp.onchange = function () {
@@ -1875,7 +1913,7 @@
     }
 
     function _syncAll() {
-      var ids = ['autoSkip', 'autoPlay', 'autoCheckPass', 'speedControl', 'lockProgress', 'muteAudio', 'brushMode'];
+      var ids = ['autoSkip', 'autoPlay', 'autoCheckPass', 'speedControl', 'lockProgress', 'muteAudio', 'preventPause', 'brushMode'];
       for (var i = 0; i < ids.length; i++) {
         var el = document.getElementById('ewt4-' + ids[i]);
         if (el) el.checked = !!EWTH.store.get(ids[i]);
@@ -1885,7 +1923,8 @@
     function _syncBrushMode() {
       var allOn = EWTH.store.get('autoSkip') && EWTH.store.get('autoPlay') &&
                   EWTH.store.get('autoCheckPass') && EWTH.store.get('speedControl') &&
-                  EWTH.store.get('lockProgress') && EWTH.store.get('muteAudio');
+                  EWTH.store.get('lockProgress') && EWTH.store.get('muteAudio') &&
+                  EWTH.store.get('preventPause');
       var el = document.getElementById('ewt4-brushMode');
       if (el) el.checked = allOn;
       EWTH.store.set('brushMode', allOn);
@@ -2019,6 +2058,7 @@
         _panel.appendChild(_makeToggle('speedControl', '2倍速播放', false));
         _panel.appendChild(_makeToggle('lockProgress', '锁定进度条', false));
         _panel.appendChild(_makeToggle('muteAudio', '静音播放', false));
+        _panel.appendChild(_makeToggle('preventPause', '禁止暂停', false));
         _panel.appendChild(_makeToggle('glassEffect', '液态玻璃效果', false));
         _panel.appendChild(_makeColorPicker());
         _panel.appendChild(_makeToggle('brushMode', '刷课模式（一键全开）', true));
@@ -2086,7 +2126,7 @@
   })();
 
   // ============================================================
-  // 18. BOOTSTRAP — 初始化 & SPA 导航 (v4.5.1)
+  // 19. BOOTSTRAP — 初始化 & SPA 导航 (v4.5.1)
   // ============================================================
   var _bootRetry = 0;
   var MAX_RETRY = 10;
@@ -2140,6 +2180,7 @@
         if (EWTH.store.get('speedControl'))  EWTH.speed.toggle(true);
         if (EWTH.store.get('lockProgress'))  EWTH.progresslock.toggle(true);
         if (EWTH.store.get('muteAudio'))     EWTH.mute.toggle(true);
+        if (EWTH.store.get('preventPause'))  EWTH.nopause.toggle(true);
       }
 
       // 恢复液态玻璃效果状态
@@ -2149,7 +2190,7 @@
 
       _booted = true;
       _bootRetry = 0;
-      EWTH.logger.info('BOOT', 'v4.5.3 ready');
+      EWTH.logger.info('BOOT', 'v4.6.0 ready');
     } catch (e) {
       EWTH.logger.error('BOOT', 'failed at step: ' + e.message);
       console.error('[EWT Helper] BOOT error:', e);
